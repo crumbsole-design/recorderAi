@@ -2,4 +2,6 @@
 plugins {
     alias(libs.plugins.android.application) apply false
     alias(libs.plugins.kotlin.compose) apply false
+    // Kover para reports de coverage
+    id("org.jetbrains.kotlinx.kover") version "0.7.3" apply false
 }

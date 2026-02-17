@@ -53,8 +53,9 @@ import kotlin.math.sqrt
 
 class DataCollectionService : Service() {
 
-    private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
-    private var isRecording = false
+    // permitimos reemplazar el scope en tests
+    internal var serviceScope = CoroutineScope(Dispatchers.IO + Job())
+    internal var isRecording = false
 
     // Serializa nulos para mantener estructura JSON fija (ej: "magnetometer": null)
     private val gson = GsonBuilder().serializeNulls().create()
@@ -72,7 +73,14 @@ class DataCollectionService : Service() {
         private const val SAMPLE_RATE = 16000
         private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
-        private val BUFFER_SIZE = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT) * 2
+        // evitar llamada a AudioRecord.getMinBufferSize en tests JVM (Robolectric o JVM)
+        private val BUFFER_SIZE: Int by lazy {
+            try {
+                AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT) * 2
+            } catch (t: Throwable) {
+                1024
+            }
+        }
         private const val NOTIFICATION_CHANNEL_ID = "wardriving_channel"
         private const val NOTIFICATION_ID = 1
     }
@@ -107,7 +115,7 @@ class DataCollectionService : Service() {
     // --- BUCLES ---
 
     // Este bucle corre cada ~10 segundos (Bluetooth + Magnetómetro)
-    private suspend fun runBluetoothAndMagnetometerLoop() {
+    internal suspend fun runBluetoothAndMagnetometerLoop() {
         val locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
         val sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
 
@@ -144,7 +152,7 @@ class DataCollectionService : Service() {
         }
     }
 
-    private suspend fun runEnvironmentLoop() {
+    internal suspend fun runEnvironmentLoop() {
         val wifiManager = getSystemService(Context.WIFI_SERVICE) as WifiManager
         val telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
         val locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
@@ -181,7 +189,7 @@ class DataCollectionService : Service() {
 
     // --- NUEVA FUNCIÓN: CAPTURA DE MAGNETÓMETRO ---
 
-    private suspend fun getFreshMagnetometer(sensorManager: SensorManager): MagnetometerInfo? = suspendCancellableCoroutine { cont ->
+    internal suspend fun getFreshMagnetometer(sensorManager: SensorManager): MagnetometerInfo? = suspendCancellableCoroutine { cont ->
         val sensor = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
         if (sensor == null) {
             if (cont.isActive) cont.resume(null)
@@ -226,7 +234,8 @@ class DataCollectionService : Service() {
 
     // --- RESTO DE ESCÁNERES (Idénticos a tu versión anterior) ---
 
-    private suspend fun scanWifiSuspend(wifiManager: WifiManager): List<WifiInfo> = suspendCancellableCoroutine { cont ->
+    @SuppressLint("MissingPermission")
+    internal suspend fun scanWifiSuspend(wifiManager: WifiManager): List<WifiInfo> = suspendCancellableCoroutine { cont ->
         if (!hasPermissions(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_WIFI_STATE, Manifest.permission.CHANGE_WIFI_STATE)) {
             if (cont.isActive) cont.resume(emptyList())
             return@suspendCancellableCoroutine
@@ -264,7 +273,7 @@ class DataCollectionService : Service() {
     }
 
     @SuppressLint("MissingPermission")
-    private suspend fun scanBluetoothSuspend(): List<BtInfo> = suspendCancellableCoroutine { cont ->
+    internal suspend fun scanBluetoothSuspend(): List<BtInfo> = suspendCancellableCoroutine { cont ->
         val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val adapter = btManager.adapter
         if (adapter == null || !adapter.isEnabled || !hasPermissions(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)) {
@@ -294,7 +303,7 @@ class DataCollectionService : Service() {
     }
 
     @SuppressLint("MissingPermission")
-    private suspend fun getFreshCellInfo(telephonyManager: TelephonyManager): List<com.example.recorderai.model.CellInfo> = suspendCancellableCoroutine { cont ->
+    internal suspend fun getFreshCellInfo(telephonyManager: TelephonyManager): List<com.example.recorderai.model.CellInfo> = suspendCancellableCoroutine { cont ->
         if (!hasPermissions(Manifest.permission.ACCESS_FINE_LOCATION)) {
             if (cont.isActive) cont.resume(emptyList())
             return@suspendCancellableCoroutine
@@ -314,7 +323,7 @@ class DataCollectionService : Service() {
     }
 
     @SuppressLint("MissingPermission")
-    private suspend fun getFreshLocation(locManager: LocationManager): GeoLocation? = suspendCancellableCoroutine { cont ->
+    internal suspend fun getFreshLocation(locManager: LocationManager): GeoLocation? = suspendCancellableCoroutine { cont ->
         if (!hasPermissions(Manifest.permission.ACCESS_FINE_LOCATION)) {
             if (cont.isActive) cont.resume(null)
             return@suspendCancellableCoroutine
@@ -345,7 +354,7 @@ class DataCollectionService : Service() {
 
     // --- UTILIDADES ---
 
-    private fun parseCells(rawList: List<android.telephony.CellInfo>?): List<com.example.recorderai.model.CellInfo> {
+    internal fun parseCells(rawList: List<android.telephony.CellInfo>?): List<com.example.recorderai.model.CellInfo> {
         if (rawList == null) return emptyList()
         return rawList.mapNotNull { cell ->
             var type = "UNKNOWN"; var cid = 0; var lac = 0; var dbm = 0
@@ -375,7 +384,7 @@ class DataCollectionService : Service() {
         wakeLock?.acquire(4*60*60*1000L)
     }
 
-    private fun setupFiles() {
+    internal fun setupFiles() {
         val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val rootDir = getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS) ?: filesDir
         sessionDir = File(rootDir, "RecorderAI/Session_$timeStamp")
@@ -425,7 +434,7 @@ class DataCollectionService : Service() {
         }
     }
 
-    private suspend fun appendLog(record: ScanRecord) {
+    internal suspend fun appendLog(record: ScanRecord) {
         fileMutex.withLock {
             try {
                 val jsonLine = gson.toJson(record) + "\n"
