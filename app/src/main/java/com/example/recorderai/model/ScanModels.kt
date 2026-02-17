@@ -2,13 +2,14 @@ package com.example.recorderai.model
 
 // Modelo principal que agrupa todo lo que pasa en un instante T
 data class ScanRecord(
-    val timestamp: Long,          // Hora exacta del sistema
-    val readableTime: String,     // Hora legible para humanos
-    val location: GeoLocation?,   // Puede ser null si no hay GPS
+    val timestamp: Long,
+    val readableTime: String,
+    val location: GeoLocation?,
     val wifiNetworks: List<WifiInfo>,
     val bluetoothDevices: List<BtInfo>,
     val cellTowers: List<CellInfo>,
-    val audioFilename: String     // Nombre del archivo de audio asociado
+    val magnetometer: MagnetometerInfo?, // <--- NUEVO CAMPO
+    val audioFilename: String
 )
 
 data class GeoLocation(
@@ -17,7 +18,12 @@ data class GeoLocation(
     val accuracy: Float,
     val altitude: Double
 )
-
+data class MagnetometerInfo(
+    val x: Float, // Fuerza en eje X (µT)
+    val y: Float, // Fuerza en eje Y (µT)
+    val z: Float, // Fuerza en eje Z (µT)
+    val total: Float // Fuerza total (µT)
+)
 data class WifiInfo(
     val ssid: String,       // Nombre de la red (Oculto si es '')
     val bssid: String,      // Dirección MAC (Identificador único)
