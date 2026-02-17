@@ -81,18 +81,17 @@ fun WardrivingScreen() {
 
     // --- PERMISOS ---
     val permissionsToRequest = remember {
-        val list = mutableListOf(
-            Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.READ_PHONE_STATE
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) list.add(Manifest.permission.POST_NOTIFICATIONS)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            list.add(Manifest.permission.BLUETOOTH_SCAN)
-            list.add(Manifest.permission.BLUETOOTH_CONNECT)
-        }
-        list.toTypedArray()
+        buildList {
+            add(Manifest.permission.RECORD_AUDIO)
+            add(Manifest.permission.ACCESS_FINE_LOCATION)
+            add(Manifest.permission.ACCESS_COARSE_LOCATION)
+            add(Manifest.permission.READ_PHONE_STATE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                add(Manifest.permission.BLUETOOTH_SCAN)
+                add(Manifest.permission.BLUETOOTH_CONNECT)
+            }
+        }.toTypedArray()
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -190,12 +189,22 @@ fun WardrivingScreen() {
 suspend fun exportLastSession(context: Context) {
     withContext(Dispatchers.IO) {
         val rootDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
+        if (rootDir == null) {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "Almacenamiento externo no disponible", Toast.LENGTH_SHORT).show()
+            }
+            return@withContext
+        }
+
         val sessionsDir = File(rootDir, "RecorderAI")
+        if (!sessionsDir.exists() && !sessionsDir.mkdirs()) {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "No se puede acceder al directorio de sesiones", Toast.LENGTH_SHORT).show()
+            }
+            return@withContext
+        }
 
-        val lastSession = sessionsDir.listFiles()
-            ?.filter { it.isDirectory }
-            ?.maxByOrNull { it.lastModified() }
-
+        val lastSession = sessionsDir.listFiles { f -> f.isDirectory }?.maxByOrNull { it.lastModified() }
         if (lastSession == null) {
             withContext(Dispatchers.Main) {
                 Toast.makeText(context, "No hay sesiones", Toast.LENGTH_SHORT).show()
@@ -204,17 +213,23 @@ suspend fun exportLastSession(context: Context) {
         }
 
         val zipFile = File(sessionsDir, "${lastSession.name}.zip")
-        // Asegúrate de que ZipUtils esté en el proyecto
-        val success = ZipUtils.zipFolder(lastSession, zipFile)
+        val zipResult = ZipUtils.zipFolder(lastSession, zipFile)
 
         withContext(Dispatchers.Main) {
-            if (success) shareFile(context, zipFile)
-            else Toast.makeText(context, "Error al comprimir", Toast.LENGTH_SHORT).show()
+            when (zipResult) {
+                is ZipResult.Success -> shareFile(context, zipResult.file)
+                is ZipResult.Error -> Toast.makeText(context, "Error al comprimir: ${zipResult.message}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 }
 
 fun shareFile(context: Context, file: File) {
+    if (!file.exists()) {
+        Toast.makeText(context, "Archivo no encontrado", Toast.LENGTH_SHORT).show()
+        return
+    }
+
     try {
         val uri: Uri = FileProvider.getUriForFile(
             context,
@@ -250,23 +265,17 @@ fun stopWardrivingService(context: Context) {
 }
 
 // Verificación REAL de permisos
-fun hasAllPermissions(context: Context, permissions: Array<String>): Boolean {
-    for (p in permissions) {
-        if (ContextCompat.checkSelfPermission(context, p) != PackageManager.PERMISSION_GRANTED) {
-            return false
-        }
-    }
-    return true
-}
+fun hasAllPermissions(context: Context, permissions: Array<String>): Boolean =
+    permissions.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
 
 // Verificación REAL de servicio
 @Suppress("DEPRECATION")
 fun isServiceRunning(context: Context): Boolean {
-    val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
-    for (service in manager.getRunningServices(Int.MAX_VALUE)) {
-        if (DataCollectionService::class.java.name == service.service.className) {
-            return true
-        }
+    return try {
+        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+            ?: return false
+        manager.getRunningServices(Int.MAX_VALUE).any { it.service?.className == DataCollectionService::class.java.name }
+    } catch (e: Exception) {
+        false
     }
-    return false
 }

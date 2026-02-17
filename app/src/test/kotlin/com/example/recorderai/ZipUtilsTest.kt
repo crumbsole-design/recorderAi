@@ -28,7 +28,7 @@ class ZipUtilsTest {
 
             val result = ZipUtils.zipFolder(tempDir, zipFile)
 
-            result shouldBe true
+            (result as? ZipResult.Success)?.file?.exists() shouldBe true
             zipFile.exists() shouldBe true
 
             val entries = java.util.zip.ZipFile(zipFile).use { zf ->
@@ -49,7 +49,7 @@ class ZipUtilsTest {
 
             val result = ZipUtils.zipFolder(nonExistent, zipFile)
 
-            result shouldBe false
+            (result is ZipResult.Error) shouldBe true
             zipFile.delete()
         }
     }
