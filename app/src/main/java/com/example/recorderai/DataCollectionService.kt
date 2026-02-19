@@ -37,6 +37,10 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.example.recorderai.model.*
+import com.example.recorderai.data.AppDatabase
+import com.example.recorderai.data.RoomEntity
+import com.example.recorderai.data.ScanDataEntity
+import com.example.recorderai.data.ScanSessionEntity
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.*
@@ -55,14 +59,14 @@ class DataCollectionService : Service() {
 
     // permitimos reemplazar el scope en tests
     internal var serviceScope = CoroutineScope(Dispatchers.IO + Job())
-    internal var isRecording = false
+    @Volatile internal var isRecording = false
 
     // Serializa nulos para mantener estructura JSON fija (ej: "magnetometer": null)
     private val gson = GsonBuilder().serializeNulls().create()
 
     private var wakeLock: PowerManager.WakeLock? = null
     private val fileMutex = Mutex()
-    private var lastKnownWifiCount = 0
+    @Volatile private var lastKnownWifiCount = 0
 
     companion object {
         const val ACTION_CAPTURE_UPDATE = "com.example.recorderai.CAPTURE_UPDATE"
@@ -89,6 +93,10 @@ class DataCollectionService : Service() {
     private lateinit var currentAudioFile: File
     private lateinit var currentLogFile: File
 
+    // DB & Session
+    private lateinit var db: AppDatabase
+    private var currentSessionId: Long = -1L
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -104,6 +112,17 @@ class DataCollectionService : Service() {
         if (!isRecording) {
             isRecording = true
             setupFiles()
+            
+            // Init DB
+            db = AppDatabase.getInstance(applicationContext)
+            serviceScope.launch(Dispatchers.IO) {
+                // Create default room/session for immediate testing
+                val dao = db.scanDao()
+                val roomName = "Room_${System.currentTimeMillis()}"
+                val roomId = dao.insertRoom(RoomEntity(name = roomName, timestamp = System.currentTimeMillis()))
+                currentSessionId = dao.insertSession(ScanSessionEntity(roomId = roomId, cellId = 0, timestamp = System.currentTimeMillis()))
+            }
+
            // startAudioRecording()
             // Lanzamos bucles paralelos
             serviceScope.launch { runBluetoothAndMagnetometerLoop() } // NOMBRE ACTUALIZADO
@@ -142,10 +161,11 @@ class DataCollectionService : Service() {
                 bluetoothDevices = distinctBt,
                 cellTowers = emptyList(),
                 magnetometer = magInfo, // Guardamos datos magnéticos
-                audioFilename = currentAudioFile.name
+                audioFilename = "SUSPENDED"
             )
 
             appendLog(record)
+            saveDataToDb(record, "BT_MAGNET")
             sendUiUpdate(readableTime)
 
             delay(6000L) // Ciclo total ~10s
@@ -177,11 +197,12 @@ class DataCollectionService : Service() {
                 wifiNetworks = wifiList,
                 bluetoothDevices = emptyList(),
                 cellTowers = cellList,
-                magnetometer = null, // En este bucle lento no leemos magnetómetro (o podrias duplicarlo si quieres)
-                audioFilename = currentAudioFile.name
+                magnetometer = null,
+                audioFilename = "SUSPENDED"
             )
 
             appendLog(record)
+            saveDataToDb(record, "WIFI_CELL")
             sendUiUpdate(readableTime)
             delay(25000L) // Ciclo ~30s
         }
@@ -254,21 +275,29 @@ class DataCollectionService : Service() {
                         val results = wifiManager.scanResults.map {
                             WifiInfo(it.SSID ?: "", it.BSSID ?: "", it.level, it.frequency, it.capabilities ?: "")
                         }
-                        cont.resume(results)
-                    } catch (e: Exception) { cont.resume(emptyList()) }
+                        try { applicationContext.unregisterReceiver(this) } catch (ignored: Exception) {}
+                        if (cont.isActive) cont.resume(results)
+                    } catch (e: Exception) {
+                        try { applicationContext.unregisterReceiver(this) } catch (ignored: Exception) {}
+                        if (cont.isActive) cont.resume(emptyList())
+                    }
                 } else {
-                    cont.resume(emptyList())
+                    try { applicationContext.unregisterReceiver(this) } catch (ignored: Exception) {}
+                    if (cont.isActive) cont.resume(emptyList())
                 }
             }
         }
         try {
             applicationContext.registerReceiver(receiver, IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION))
             cont.invokeOnCancellation { try { applicationContext.unregisterReceiver(receiver) } catch (e: Exception) {} }
-            if (!wifiManager.startScan()) { if (cont.isActive) cont.resume(emptyList()) }
+            if (!wifiManager.startScan()) { try { applicationContext.unregisterReceiver(receiver) } catch (ignored: Exception) {}; if (cont.isActive) cont.resume(emptyList()) }
         } catch (e: Exception) { if (cont.isActive) cont.resume(emptyList()) }
         serviceScope.launch {
             delay(5000)
-            if (cont.isActive) cont.resume(emptyList())
+            if (cont.isActive) {
+                try { applicationContext.unregisterReceiver(receiver) } catch (ignored: Exception) {}
+                cont.resume(emptyList())
+            }
         }
     }
 
@@ -282,6 +311,10 @@ class DataCollectionService : Service() {
         }
         val results = mutableListOf<BtInfo>()
         val scanner = adapter.bluetoothLeScanner
+        if (scanner == null) {
+            if (cont.isActive) cont.resume(emptyList())
+            return@suspendCancellableCoroutine
+        }
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult?) {
                 result?.device?.let { device ->
@@ -297,7 +330,7 @@ class DataCollectionService : Service() {
             serviceScope.launch {
                 delay(4000)
                 try { scanner.stopScan(callback) } catch(e: Exception){}
-                if (cont.isActive) cont.resume(results)
+                if (cont.isActive) cont.resume(results.toList())
             }
         } catch (e: Exception) { if (cont.isActive) cont.resume(emptyList()) }
     }
@@ -318,6 +351,11 @@ class DataCollectionService : Service() {
                         if (cont.isActive) cont.resume(parseCells(telephonyManager.allCellInfo))
                     }
                 })
+                // Fallback timeout in case the callback never fires
+                serviceScope.launch {
+                    delay(2000)
+                    if (cont.isActive) cont.resume(parseCells(telephonyManager.allCellInfo))
+                }
             } catch (e: Exception) { if (cont.isActive) cont.resume(parseCells(telephonyManager.allCellInfo)) }
         } else { if (cont.isActive) cont.resume(parseCells(telephonyManager.allCellInfo)) }
     }
@@ -371,7 +409,7 @@ class DataCollectionService : Service() {
                 }
             }
             if (dbm != 0 && dbm != Int.MAX_VALUE) com.example.recorderai.model.CellInfo(type, cid, lac, dbm) else null
-        }
+        }.toList()
     }
 
     private fun hasPermissions(vararg perms: String): Boolean {
@@ -422,25 +460,52 @@ class DataCollectionService : Service() {
             if (!hasPermissions(Manifest.permission.RECORD_AUDIO)) return@launch
             val recorder = AudioRecord(MediaRecorder.AudioSource.MIC, SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT, BUFFER_SIZE)
             val data = ByteArray(BUFFER_SIZE)
+            var outputStream: FileOutputStream? = null
             try {
-                recorder.startRecording()
-                val outputStream = FileOutputStream(currentAudioFile)
-                while (isRecording) {
-                    val read = recorder.read(data, 0, BUFFER_SIZE)
-                    if (read > 0) outputStream.write(data, 0, read)
+                if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+                    Log.e(TAG, "AudioRecord not initialized")
+                    return@launch
                 }
-                outputStream.close(); recorder.stop(); recorder.release()
-            } catch (e: Exception) { Log.e(TAG, "Audio Error: ${e.message}") }
+                recorder.startRecording()
+                outputStream = FileOutputStream(currentAudioFile)
+                while (isRecording) {
+                    val read = recorder.read(data, 0, data.size)
+                    if (read > 0) outputStream.write(data, 0, read)
+                    else if (read == AudioRecord.ERROR_INVALID_OPERATION || read == AudioRecord.ERROR_BAD_VALUE) break
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Audio Error: ${e.message}")
+            } finally {
+                try { outputStream?.flush(); outputStream?.close() } catch (e: Exception) {}
+                try { if (recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) recorder.stop() } catch (e: Exception) {}
+                try { recorder.release() } catch (e: Exception) {}
+            }
         }
     }
 
     internal suspend fun appendLog(record: ScanRecord) {
         fileMutex.withLock {
             try {
+                if (!this::currentLogFile.isInitialized) setupFiles()
                 val jsonLine = gson.toJson(record) + "\n"
                 FileOutputStream(currentLogFile, true).use { it.write(jsonLine.toByteArray()) }
                 Log.d(TAG, "Log guardado.")
             } catch (e: Exception) { Log.e(TAG, "Log Error: $e") }
+        }
+    }
+
+    private suspend fun saveDataToDb(record: ScanRecord, type: String) {
+        if (!this::db.isInitialized) return
+        if (currentSessionId != -1L) {
+            val json = gson.toJson(record)
+            db.scanDao().insertData(
+                ScanDataEntity(
+                    sessionId = currentSessionId,
+                    type = type,
+                    content = json,
+                    timestamp = record.timestamp
+                )
+            )
         }
     }
 
@@ -456,6 +521,7 @@ class DataCollectionService : Service() {
     override fun onDestroy() {
         isRecording = false
         serviceScope.cancel()
+        try { stopForeground(true) } catch (e: Exception) {}
         try { if (wakeLock?.isHeld == true) wakeLock?.release() } catch (e:Exception){}
         super.onDestroy()
     }
