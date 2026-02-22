@@ -1,32 +1,24 @@
 package com.example.recorderai.data
 
 import android.content.Context
-import androidx.room.Database
-import androidx.room.Room
-import androidx.room.RoomDatabase
 
-@Database(
-    entities = [RoomEntity::class, ScanSessionEntity::class, ScanDataEntity::class, CellAttributeEntity::class],
-    version = 1,
-    exportSchema = false
-)
-abstract class AppDatabase : RoomDatabase() {
-    abstract fun scanDao(): ScanDao
+/**
+ * Database singleton providing access to ScanDao.
+ * Now uses direct SQLite via DatabaseHelper instead of Room.
+ */
+object AppDatabase {
+    @Volatile
+    private var daoInstance: ScanDao? = null
 
-    companion object {
-        @Volatile
-        private var INSTANCE: AppDatabase? = null
+    @Volatile
+    private var helperInstance: DatabaseHelper? = null
 
-        fun getInstance(context: Context): AppDatabase {
-            return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
-                    AppDatabase::class.java,
-                    "recorder_ai_db"
-                ).build()
-                INSTANCE = instance
-                instance
+    fun getInstance(context: Context): ScanDao {
+        return daoInstance ?: synchronized(this) {
+            val helper = helperInstance ?: DatabaseHelper(context.applicationContext).also {
+                helperInstance = it
             }
+            ScanDaoImpl(helper).also { daoInstance = it }
         }
     }
 }
