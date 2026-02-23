@@ -41,4 +41,30 @@ interface ScanDao {
     suspend fun deleteRoom(roomId: Long)
 
     suspend fun updateRoomName(roomId: Long, newName: String)
+
+    // Export operations
+    suspend fun getAllRoomsForExport(): List<RoomEntity>
+
+    suspend fun getCellAttributesForRoom(roomId: Long): List<CellAttributeEntity>
+
+    suspend fun getAllSessionsForExport(roomId: Long? = null): List<ScanSessionEntity>
+
+    suspend fun getAllScanDataForExport(roomId: Long? = null): List<ScanDataWithSessionInfo>
+
+    suspend fun getScanDataCountsBySession(sessionId: Long): Int
+
+    suspend fun getScanDataCountsByTypeForExport(roomId: Long? = null): Map<String, Int>
+
+    suspend fun getScanDataDateRange(roomId: Long? = null): Pair<Long, Long>?
 }
+
+// Helper class for export queries with session info
+data class ScanDataWithSessionInfo(
+    val id: Long,
+    val sessionId: Long,
+    val roomId: Long,
+    val cellId: Int,
+    val type: String,
+    val content: String,
+    val timestamp: Long
+)

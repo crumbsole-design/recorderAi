@@ -6,10 +6,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -28,12 +26,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
-import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.example.recorderai.data.AppDatabase
 import com.example.recorderai.data.ScanRepository
 import com.example.recorderai.ui.screens.CellDetailScreen
@@ -76,6 +74,7 @@ fun MainNavigation() {
         composable("room_list") {
             RoomListScreenWithControls(
                 viewModel = viewModel,
+                repository = repository,
                 onRoomSelected = { roomId ->
                     navController.navigate("room_grid/$roomId")
                 }
@@ -132,6 +131,7 @@ fun MainNavigation() {
 @Composable
 fun RoomListScreenWithControls(
     viewModel: RoomGridViewModel,
+    repository: ScanRepository,
     onRoomSelected: (Long) -> Unit
 ) {
     val context = LocalContext.current
@@ -212,41 +212,27 @@ fun RoomListScreenWithControls(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Status indicator
+            // Compact status indicator
             Box(
                 modifier = Modifier
-                    .size(60.dp)
+                    .size(48.dp)
                     .background(if (isServiceRunning) Color(0xffEF5350) else Color.Gray, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     if (isServiceRunning) "ON" else "OFF",
                     color = Color.White,
-                    fontSize = 16.sp,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
-
-            // Status text
-            Text(
-                lastCaptureTime,
-                fontSize = 10.sp,
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Text(
-                "WiFi: $wifiCount",
-                fontSize = 10.sp,
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.fillMaxWidth()
-            )
 
             // Nueva Estancia button
             Button(
                 onClick = { showCreateDialog = true },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(44.dp),
+                    .height(40.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.tertiary
                 ),
@@ -254,35 +240,6 @@ fun RoomListScreenWithControls(
             ) {
                 Text(
                     "NUEVA ESTANCIA",
-                    fontSize = 12.sp
-                )
-            }
-
-            // Start/Stop button
-            Button(
-                onClick = {
-                    if (isServiceRunning) {
-                        stopWardrivingService(context)
-                        isServiceRunning = false
-                    } else {
-                        if (hasAllPermissions(context, permissionsToRequest)) {
-                            startWardrivingService(context)
-                            isServiceRunning = true
-                        } else {
-                            permissionLauncher.launch(permissionsToRequest)
-                        }
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(44.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isServiceRunning) Color.DarkGray else MaterialTheme.colorScheme.primary
-                ),
-                contentPadding = PaddingValues(4.dp)
-            ) {
-                Text(
-                    if (isServiceRunning) "DETENER" else "INICIAR",
                     fontSize = 12.sp
                 )
             }
@@ -295,15 +252,19 @@ fun RoomListScreenWithControls(
                     } else {
                         scope.launch {
                             isExporting = true
-                            exportLastSession(context)
+                            val result = DataExporter.exportAndShare(context, repository)
                             isExporting = false
+                            when (result) {
+                                is ExportResult.Error -> Toast.makeText(context, result.message, Toast.LENGTH_SHORT).show()
+                                is ExportResult.Success -> { /* Share dialog shown */ }
+                            }
                         }
                     }
                 },
                 enabled = !isExporting,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(44.dp),
+                    .height(40.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
                 contentPadding = PaddingValues(4.dp)
             ) {
@@ -350,70 +311,8 @@ fun RoomListScreenWithControls(
     }
 }
 
-// --- LÓGICA DE EXPORTACIÓN Y UTILIDADES ---
+// --- FUNCIONES DE SERVICIO ---
 
-suspend fun exportLastSession(context: Context) {
-    withContext(Dispatchers.IO) {
-        val rootDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
-        if (rootDir == null) {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Almacenamiento externo no disponible", Toast.LENGTH_SHORT).show()
-            }
-            return@withContext
-        }
-
-        val sessionsDir = File(rootDir, "RecorderAI")
-        if (!sessionsDir.exists() && !sessionsDir.mkdirs()) {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "No se puede acceder al directorio de sesiones", Toast.LENGTH_SHORT).show()
-            }
-            return@withContext
-        }
-
-        val lastSession = sessionsDir.listFiles { f -> f.isDirectory }?.maxByOrNull { it.lastModified() }
-        if (lastSession == null) {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "No hay sesiones", Toast.LENGTH_SHORT).show()
-            }
-            return@withContext
-        }
-
-        val zipFile = File(sessionsDir, "${lastSession.name}.zip")
-        val zipResult = ZipUtils.zipFolder(lastSession, zipFile)
-
-        withContext(Dispatchers.Main) {
-            when (zipResult) {
-                is ZipResult.Success -> shareFile(context, zipResult.file)
-                is ZipResult.Error -> Toast.makeText(context, "Error al comprimir: ${zipResult.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-}
-
-fun shareFile(context: Context, file: File) {
-    if (!file.exists()) {
-        Toast.makeText(context, "Archivo no encontrado", Toast.LENGTH_SHORT).show()
-        return
-    }
-
-    try {
-        val uri: Uri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.provider",
-            file
-        )
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "application/zip"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        context.startActivity(Intent.createChooser(intent, "Exportar Datos"))
-    } catch (e: Exception) {
-        Toast.makeText(context, "Error al compartir: ${e.message}", Toast.LENGTH_LONG).show()
-    }
-}
-
-// --- FUNCIONES CORREGIDAS (YA NO SON STUBS) ---
 
 fun startWardrivingService(context: Context) {
     val intent = Intent(context, DataCollectionService::class.java)

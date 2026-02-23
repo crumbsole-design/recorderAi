@@ -13,16 +13,16 @@
         </DropdownSelection>
         <DialogSelection />
       </SelectionState>
-      <SelectionState runConfigName="DataCollectionIntegrationTest">
-        <option name="selectionMode" value="DROPDOWN" />
-      </SelectionState>
       <SelectionState runConfigName="AppIntegrationTest">
         <option name="selectionMode" value="DROPDOWN" />
       </SelectionState>
-      <SelectionState runConfigName="DataCollectionE2EFullFlowTest">
+      <SelectionState runConfigName="ExampleInstrumentedTest">
         <option name="selectionMode" value="DROPDOWN" />
       </SelectionState>
-      <SelectionState runConfigName="testFullDataCollectionFlowWith2MinutesCollection()">
+      <SelectionState runConfigName="service_lifecycle_start_and_stop()">
+        <option name="selectionMode" value="DROPDOWN" />
+      </SelectionState>
+      <SelectionState runConfigName="exportLastSession_triggers_share_intent()">
         <option name="selectionMode" value="DROPDOWN" />
       </SelectionState>
     </selectionStates>

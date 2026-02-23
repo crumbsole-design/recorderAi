@@ -3,25 +3,19 @@ package com.example.recorderai
 import android.app.ActivityManager
 import android.content.ComponentName
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import android.os.Environment
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import io.kotest.matchers.shouldBe
 import io.mockk.*
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.test.resetMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
-import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
-import java.io.File
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class MainHelpersTest {
@@ -93,77 +87,7 @@ class MainHelpersTest {
         }
     }
 
-    @Nested
-    inner class `export & share` {
-        @Test @Disabled("Intent.createChooser static mock fail")
-        fun `shareFile starts chooser intent when FileProvider returns uri`() {
-            mockkStatic(androidx.core.content.FileProvider::class)
-            // Need to mock Intent static if running with returnDefaultValues=true which might break Intent logic
-            mockkStatic(Intent::class) 
-            
-            val uri = mockk<android.net.Uri>()
-            every { androidx.core.content.FileProvider.getUriForFile(any(), any(), any()) } returns uri
-
-            val chooserIntent = mockk<Intent>(relaxed = true)
-            // Use any() for CharSequence to avoid generic match issues
-            every { Intent.createChooser(any(), any()) } returns chooserIntent
-
-            val ctx = mockk<Context>(relaxed = true)
-            every { ctx.packageName } returns "com.example.recorderai"
-            
-            val file = File.createTempFile("t", ".zip")
-
-            com.example.recorderai.shareFile(ctx, file)
-
-            verify { ctx.startActivity(any()) }
-            file.delete()
-        }
-
-        @Test @Disabled("Causes infinite loop - dispatcher issues")
-        fun `exportLastSession shows toast when external storage missing`() = runBlocking {
-            mockkStatic(android.widget.Toast::class)
-            val toastMock = mockk<Toast>(relaxed = true)
-            every { android.widget.Toast.makeText(any(), any<String>(), any()) } returns toastMock
-
-            val ctx = mockk<Context>(relaxed = true)
-            every { ctx.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) } returns null
-
-            exportLastSession(ctx)
-            testDispatcher.scheduler.advanceUntilIdle()
-
-            verify { android.widget.Toast.makeText(any(), "Almacenamiento externo no disponible", Toast.LENGTH_SHORT) }
-        }
-
-        @Test @Disabled("Causes infinite loop - dispatcher issues")
-        fun `exportLastSession shows toast when no sessions found`() = runBlocking {
-            mockkStatic(android.widget.Toast::class)
-            val toastMock = mockk<Toast>(relaxed = true)
-            every { android.widget.Toast.makeText(any(), any<String>(), any()) } returns toastMock
-
-            // prepare mock context with empty RecorderAI folder
-            val root = createTempDir(prefix = "docs")
-            val sessions = File(root, "RecorderAI")
-            sessions.mkdirs()
-
-            val ctx = mockk<Context>(relaxed = true)
-            every { ctx.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) } returns root
-
-            exportLastSession(ctx)
-            testDispatcher.scheduler.advanceUntilIdle()
-
-            verify { android.widget.Toast.makeText(any(), "No hay sesiones", Toast.LENGTH_SHORT) }
-
-            // ensure no zip created
-            sessions.listFiles()?.isEmpty() shouldBe true
-
-            // cleanup
-            root.deleteRecursively()
-        }
-
-        @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-        @Test @Disabled("Causes infinite loop - needs refactoring of exportLastSession for testability")
-        fun `exportLastSession zips last session and calls share`() = kotlinx.coroutines.test.runTest {
-            // Test disabled due to dispatcher configuration issues
-        }
-    }
+    // Export tests moved to DataExporterTest.kt
+    // The old exportLastSession and shareFile functions have been removed
+    // and replaced with DataExporter.exportAndShare()
 }

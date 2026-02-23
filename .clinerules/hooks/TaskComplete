@@ -1,0 +1,163 @@
+#!/bin/bash
+#
+# TaskComplete Hook
+# 
+# Executes when a task completes successfully.
+# 
+# Input: { taskId, taskComplete: { task: string }, clineVersion, timestamp, ... }
+# Output: { cancel: boolean, contextModification?: string, errorMessage?: string }
+# 
+# Use cases:
+# - Run tests or validation
+# - Generate reports or summaries
+# - Notify stakeholders
+# - Trigger CI/CD pipelines
+
+set -e
+
+# Read JSON input from stdin
+INPUT=$(cat)
+
+# Parse input using jq (or fallback to basic parsing)
+if command -v jq &> /dev/null; then
+  TASK=$(echo "$INPUT" | jq -r '.taskComplete.task')
+else
+  TASK="<task>"
+fi
+
+echo "[TaskComplete] Task completed: $TASK" >&2
+
+# Set JAVA_HOME for Gradle
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+
+# Project root directory
+PROJECT_ROOT="/home/crumbsole/AndroidStudioProjects/recorderAi"
+cd "$PROJECT_ROOT"
+
+# =============================================================================
+# STEP 1: Run Unit Tests (MANDATORY - blocks pipeline on failure)
+# =============================================================================
+echo "[TaskComplete] Running unit tests..." >&2
+
+UNIT_TEST_OUTPUT=$(./gradlew test --console=plain 2>&1)
+UNIT_TEST_EXIT_CODE=$?
+
+if [ $UNIT_TEST_EXIT_CODE -ne 0 ]; then
+  echo "[TaskComplete] ❌ Unit tests FAILED! Blocking pipeline." >&2
+  echo "$UNIT_TEST_OUTPUT" >&2
+  echo "{\"cancel\":true,\"contextModification\":\"Unit tests failed. Fix the failing tests before proceeding.\",\"errorMessage\":\"Unit tests failed with exit code $UNIT_TEST_EXIT_CODE\"}"
+  exit 0
+fi
+
+echo "[TaskComplete] ✅ Unit tests passed." >&2
+
+# =============================================================================
+# STEP 2: Check for Integration and E2E Test Flags
+# =============================================================================
+# These environment variables can be set to enable additional tests:
+# - ENABLE_INTEGRATION_TESTS=true
+# - ENABLE_E2E_TESTS=true
+#
+# The model should ask the user to confirm these before setting them.
+
+RUN_INTEGRATION="${ENABLE_INTEGRATION_TESTS:-false}"
+RUN_E2E="${ENABLE_E2E_TESTS:-false}"
+
+INTEGRATION_RESULT=""
+E2E_RESULT=""
+ERROR_MESSAGES=""
+
+# =============================================================================
+# STEP 3: Run Integration Tests (if enabled)
+# =============================================================================
+if [ "$RUN_INTEGRATION" = "true" ]; then
+  echo "[TaskComplete] Running integration tests..." >&2
+  
+  INTEGRATION_OUTPUT=$(./gradlew connectedDebugAndroidTest --tests "DataCollectionIntegrationTest" --console=plain 2>&1)
+  INTEGRATION_EXIT_CODE=$?
+  
+  if [ $INTEGRATION_EXIT_CODE -ne 0 ]; then
+    echo "[TaskComplete] ⚠️ Integration tests FAILED." >&2
+    echo "$INTEGRATION_OUTPUT" >&2
+    ERROR_MESSAGES="${ERROR_MESSAGES}Integration tests failed. "
+    INTEGRATION_RESULT="FAILED"
+  else
+    echo "[TaskComplete] ✅ Integration tests passed." >&2
+    INTEGRATION_RESULT="PASSED"
+  fi
+fi
+
+# =============================================================================
+# STEP 4: Run E2E Tests (if enabled)
+# =============================================================================
+if [ "$RUN_E2E" = "true" ]; then
+  echo "[TaskComplete] Running E2E tests..." >&2
+  
+  E2E_OUTPUT=$(./gradlew connectedDebugAndroidTest --tests "CellDataCollectionE2ETest" --console=plain 2>&1)
+  E2E_EXIT_CODE=$?
+  
+  if [ $E2E_EXIT_CODE -ne 0 ]; then
+    echo "[TaskComplete] ⚠️ E2E tests FAILED." >&2
+    echo "$E2E_OUTPUT" >&2
+    ERROR_MESSAGES="${ERROR_MESSAGES}E2E tests failed. "
+    E2E_RESULT="FAILED"
+  else
+    echo "[TaskComplete] ✅ E2E tests passed." >&2
+    E2E_RESULT="PASSED"
+  fi
+fi
+
+# =============================================================================
+# STEP 5: Build Context Modification for Model
+# =============================================================================
+CONTEXT_MODIFICATION="## Task Complete - Test Results\n\n"
+CONTEXT_MODIFICATION+="### ✅ Unit Tests: PASSED\n\n"
+
+if [ "$RUN_INTEGRATION" = "true" ]; then
+  if [ "$INTEGRATION_RESULT" = "PASSED" ]; then
+    CONTEXT_MODIFICATION+="### ✅ Integration Tests: PASSED\n\n"
+  else
+    CONTEXT_MODIFICATION+="### ❌ Integration Tests: FAILED\n\n"
+  fi
+else
+  CONTEXT_MODIFICATION+="### ⏭️ Integration Tests: SKIPPED\n\n"
+fi
+
+if [ "$RUN_E2E" = "true" ]; then
+  if [ "$E2E_RESULT" = "PASSED" ]; then
+    CONTEXT_MODIFICATION+="### ✅ E2E Tests: PASSED\n\n"
+  else
+    CONTEXT_MODIFICATION+="### ❌ E2E Tests: FAILED\n\n"
+  fi
+else
+  CONTEXT_MODIFICATION+="### ⏭️ E2E Tests: SKIPPED\n\n"
+fi
+
+# Add prompt for user to enable integration/e2e tests
+CONTEXT_MODIFICATION+="---\n\n"
+CONTEXT_MODIFICATION+="**Would you like to run additional tests?**\n\n"
+CONTEXT_MODIFICATION+="The following test types are available:\n"
+CONTEXT_MODIFICATION+="- **Integration Tests**: Test component interactions (requires device/emulator)\n"
+CONTEXT_MODIFICATION+="- **E2E Tests**: End-to-end user flow tests (requires device/emulator)\n\n"
+CONTEXT_MODIFICATION+="To enable these tests, set environment variables:\n"
+CONTEXT_MODIFICATION+="\`\`\`bash\n"
+CONTEXT_MODIFICATION+="ENABLE_INTEGRATION_TESTS=true  # Enable integration tests\n"
+CONTEXT_MODIFICATION+="ENABLE_E2E_TESTS=true          # Enable E2E tests\n"
+CONTEXT_MODIFICATION+="\`\`\`\n\n"
+CONTEXT_MODIFICATION+="**Ask the user**: Do you want to enable integration tests and/or E2E tests for this task completion?\n"
+
+# Determine if we should cancel based on test results
+# Unit test failures already cancelled above
+# Integration/E2E failures are warnings, not blockers (can be changed if needed)
+SHOULD_CANCEL=false
+FINAL_ERROR=""
+
+if [ -n "$ERROR_MESSAGES" ]; then
+  FINAL_ERROR="Some optional tests failed: $ERROR_MESSAGES"
+fi
+
+# Escape special characters for JSON
+CONTEXT_MODIFICATION=$(echo "$CONTEXT_MODIFICATION" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | tr '\n' '\\n' | sed 's/\\n$//')
+
+# Return result
+echo "{\"cancel\":$SHOULD_CANCEL,\"contextModification\":\"$CONTEXT_MODIFICATION\",\"errorMessage\":\"$FINAL_ERROR\"}"
