@@ -81,4 +81,9 @@ class ScanRepository(private val dao: ScanDao) {
     suspend fun deleteRoom(roomId: Long) {
         dao.deleteRoom(roomId)
     }
+
+    // Update room name
+    suspend fun updateRoomName(roomId: Long, newName: String) {
+        dao.updateRoomName(roomId, newName)
+    }
 }

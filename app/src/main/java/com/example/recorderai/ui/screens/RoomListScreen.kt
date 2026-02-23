@@ -26,9 +26,9 @@ fun RoomListScreen(
     onRoomSelected: (Long) -> Unit
 ) {
     val rooms by viewModel.rooms.collectAsState()
-    
-    // State for delete dialog
     var roomToDelete by remember { mutableStateOf<RoomEntity?>(null) }
+    var roomToEdit by remember { mutableStateOf<RoomEntity?>(null) }
+    var editName by remember { mutableStateOf("") }
 
     Scaffold(
         topBar = {
@@ -80,14 +80,55 @@ fun RoomListScreen(
                             onRoomSelected(room.id)
                         },
                         onLongPress = {
-                            roomToDelete = room
+                            if (room.name.contains("?sin configurar")) {
+                                roomToEdit = room
+                                editName = room.name
+                            } else {
+                                roomToDelete = room
+                            }
                         }
                     )
                 }
             }
         }
     }
-    
+
+    // Diálogo de edición/configuración
+    roomToEdit?.let { room ->
+        AlertDialog(
+            onDismissRequest = { roomToEdit = null },
+            title = { Text("Configurar estancia") },
+            text = {
+                Column {
+                    Text("Nombre de la estancia:")
+                    OutlinedTextField(
+                        value = editName,
+                        onValueChange = { editName = it },
+                        label = { Text("Nombre") },
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (editName.isNotBlank() && !editName.contains("?sin configurar")) {
+                            viewModel.updateRoomName(room.id, editName)
+                            roomToEdit = null
+                        }
+                    }
+                ) {
+                    Text("Guardar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { roomToEdit = null }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
+
     // Delete confirmation dialog
     roomToDelete?.let { room ->
         AlertDialog(
@@ -144,7 +185,8 @@ fun RoomListItem(
                 Text(
                     room.name,
                     fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    color = if (room.name.contains("?sin configurar")) Color.Gray else Color.Black
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(

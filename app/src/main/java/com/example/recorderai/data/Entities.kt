@@ -27,5 +27,6 @@ data class CellAttributeEntity(
     val cellId: Int,
     val isEntrance: Boolean = false,
     val isExit: Boolean = false,
-    val isLinkable: Boolean? = null  // null = not configured, true = open for linking, false = closed
+    val isLinkable: Boolean? = null,  // null = not configured, true = open for linking, false = closed
+    val displayName: String? = null  // Descriptive name for display purposes (not unique)
 )

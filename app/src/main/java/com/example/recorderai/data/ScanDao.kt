@@ -39,4 +39,6 @@ interface ScanDao {
 
     // Delete a room and all associated data
     suspend fun deleteRoom(roomId: Long)
+
+    suspend fun updateRoomName(roomId: Long, newName: String)
 }
