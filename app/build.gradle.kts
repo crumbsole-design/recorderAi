@@ -82,6 +82,8 @@ dependencies {
     androidTestImplementation("androidx.test.espresso:espresso-intents:3.5.1")
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("io.kotest:kotest-assertions-core:5.7.2")
+    androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
     // --- DEPENDENCIAS CRÍTICAS ---
     implementation("com.google.accompanist:accompanist-permissions:0.34.0")
     implementation("com.google.code.gson:gson:2.10.1")

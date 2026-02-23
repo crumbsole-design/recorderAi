@@ -103,45 +103,47 @@ class DataCollectionService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         acquireWakeLock()
-        
+
         // Handle session control intents from ViewModel
         if (intent?.action == ACTION_SET_SESSION) {
             val sessionId = intent.getLongExtra(EXTRA_SESSION_ID, -1L)
             val roomId = intent.getLongExtra(EXTRA_ROOM_ID, -1L)
             val cellId = intent.getIntExtra(EXTRA_CELL_ID, -1)
             if (sessionId != -1L && roomId != -1L && cellId != -1) {
+                // Ensure the service is fully initialised (foreground + dao + loops)
+                // before accepting a session — this handles the case where ACTION_SET_SESSION
+                // arrives as the very first intent (service not yet running).
+                ensureServiceStarted()
                 currentSessionId = sessionId
                 Log.d(TAG, "Session set to $sessionId for room $roomId cell $cellId")
             }
             return START_STICKY
         }
-        
+
         if (intent?.action == ACTION_STOP_SESSION) {
             currentSessionId = -1L
             Log.d(TAG, "Session stopped")
             return START_STICKY
         }
-        
-        try {
-            startForegroundServiceNotification()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error fatal Foreground: ${e.message}")
-            stopSelf()
-            return START_NOT_STICKY
-        }
 
+        ensureServiceStarted()
+        return START_STICKY
+    }
+
+    private fun ensureServiceStarted() {
         if (!isRecording) {
+            try {
+                startForegroundServiceNotification()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error starting foreground: ${e.message}")
+                stopSelf()
+                return
+            }
             isRecording = true
-            
-            // Init DB - AppDatabase.getInstance now returns ScanDao directly
             dao = AppDatabase.getInstance(applicationContext)
-
-            // Lanzamos bucles paralelos
-            // Los datos solo se guardarán si currentSessionId != -1L (configurado desde UI)
             serviceScope.launch { runBluetoothAndMagnetometerLoop() }
             serviceScope.launch { runEnvironmentLoop() }
         }
-        return START_STICKY
     }
     // --- BUCLES ---
 
@@ -163,20 +165,37 @@ class DataCollectionService : Service() {
             // 3. Magnetómetro (NUEVO)
             val magInfo = getFreshMagnetometer(sensorManager)
 
-            // Guardar
+            // Guardar Bluetooth por separado (solo si hay datos)
             val distinctBt = btList.distinctBy { it.address }
-            val record = ScanRecord(
-                timestamp = timestamp,
-                readableTime = readableTime,
-                location = geoLoc,
-                wifiNetworks = emptyList(),
-                bluetoothDevices = distinctBt,
-                cellTowers = emptyList(),
-                magnetometer = magInfo, // Guardamos datos magnéticos
-                audioFilename = "SUSPENDED"
-            )
+            if (distinctBt.isNotEmpty()) {
+                val btRecord = ScanRecord(
+                    timestamp = timestamp,
+                    readableTime = readableTime,
+                    location = geoLoc,
+                    wifiNetworks = emptyList(),
+                    bluetoothDevices = distinctBt,
+                    cellTowers = emptyList(),
+                    magnetometer = null,
+                    audioFilename = "SUSPENDED"
+                )
+                saveDataToDb(btRecord, "BLUETOOTH")
+            }
 
-            saveDataToDb(record, "BT_MAGNET")
+            // Guardar Magnetómetro por separado (solo si hay datos)
+            if (magInfo != null) {
+                val magRecord = ScanRecord(
+                    timestamp = timestamp,
+                    readableTime = readableTime,
+                    location = geoLoc,
+                    wifiNetworks = emptyList(),
+                    bluetoothDevices = emptyList(),
+                    cellTowers = emptyList(),
+                    magnetometer = magInfo,
+                    audioFilename = "SUSPENDED"
+                )
+                saveDataToDb(magRecord, "MAGNETOMETER")
+            }
+
             sendUiUpdate(readableTime)
 
             delay(6000L) // Ciclo total ~10s
@@ -201,18 +220,36 @@ class DataCollectionService : Service() {
             lastKnownWifiCount = wifiList.size
             val cellList = getFreshCellInfo(telephonyManager)
 
-            val record = ScanRecord(
-                timestamp = timestamp,
-                readableTime = readableTime,
-                location = geoLoc,
-                wifiNetworks = wifiList,
-                bluetoothDevices = emptyList(),
-                cellTowers = cellList,
-                magnetometer = null,
-                audioFilename = "SUSPENDED"
-            )
+            // Guardar datos WiFi por separado (solo si hay datos)
+            if (wifiList.isNotEmpty()) {
+                val wifiRecord = ScanRecord(
+                    timestamp = timestamp,
+                    readableTime = readableTime,
+                    location = geoLoc,
+                    wifiNetworks = wifiList,
+                    bluetoothDevices = emptyList(),
+                    cellTowers = emptyList(),
+                    magnetometer = null,
+                    audioFilename = "SUSPENDED"
+                )
+                saveDataToDb(wifiRecord, "WIFI")
+            }
 
-            saveDataToDb(record, "WIFI_CELL")
+            // Guardar datos Cell por separado (solo si hay datos)
+            if (cellList.isNotEmpty()) {
+                val cellRecord = ScanRecord(
+                    timestamp = timestamp,
+                    readableTime = readableTime,
+                    location = geoLoc,
+                    wifiNetworks = emptyList(),
+                    bluetoothDevices = emptyList(),
+                    cellTowers = cellList,
+                    magnetometer = null,
+                    audioFilename = "SUSPENDED"
+                )
+                saveDataToDb(cellRecord, "CELL")
+            }
+
             sendUiUpdate(readableTime)
             delay(25000L) // Ciclo ~30s
         }
@@ -455,7 +492,7 @@ class DataCollectionService : Service() {
         }
     }
 
-    private suspend fun saveDataToDb(record: ScanRecord, type: String) {
+    internal suspend fun saveDataToDb(record: ScanRecord, type: String) {
         if (!this::dao.isInitialized) return
         if (currentSessionId != -1L) {
             val json = gson.toJson(record)

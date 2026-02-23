@@ -104,9 +104,19 @@ fun MainNavigation() {
             val cellId = backStackEntry.arguments?.getString("cellId")?.toIntOrNull() ?: return@composable
             val room = viewModel.rooms.collectAsState().value.find { it.id == roomId }
             if (room != null) {
+                // Load counts FIRST (before selectRoom can clear activeCells)
                 LaunchedEffect(roomId, cellId) {
-                    viewModel.selectRoom(roomId)
                     viewModel.loadCellDataCounts(roomId, cellId)
+                }
+                // selectRoom loads cell attributes (does NOT clear activeCells for same room)
+                LaunchedEffect(roomId) {
+                    viewModel.selectRoom(roomId)
+                }
+                // Stop polling when leaving this screen
+                DisposableEffect(roomId, cellId) {
+                    onDispose {
+                        viewModel.stopPolling()
+                    }
                 }
                 CellDetailScreen(
                     viewModel = viewModel,
@@ -127,7 +137,15 @@ fun RoomListScreenWithControls(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    // Poll real service state every second so the button always reflects reality,
+    // even when the service is started/stopped from CellDetailScreen.
     var isServiceRunning by remember { mutableStateOf(isServiceRunning(context)) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            isServiceRunning = isServiceRunning(context)
+            kotlinx.coroutines.delay(1000L)
+        }
+    }
     var isExporting by remember { mutableStateOf(false) }
     var lastCaptureTime by remember { mutableStateOf("Esperando datos...") }
     var wifiCount by remember { mutableStateOf(0) }

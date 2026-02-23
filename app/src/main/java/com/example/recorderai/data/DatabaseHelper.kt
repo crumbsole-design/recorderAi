@@ -12,7 +12,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(
 ) {
     companion object {
         const val DATABASE_NAME = "recorder_ai.db"
-        const val DATABASE_VERSION = 1
+        const val DATABASE_VERSION = 2
 
         // Table names
         const val TABLE_ROOMS = "rooms"
@@ -40,6 +40,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(
         const val COLUMN_IS_ENTRANCE = "isEntrance"
         const val COLUMN_IS_EXIT = "isExit"
         const val COLUMN_IS_LINKABLE = "isLinkable"
+        const val COLUMN_DISPLAY_NAME = "displayName"
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -89,6 +90,7 @@ class DatabaseHelper(context: Context) : SQLiteOpenHelper(
                 $COLUMN_IS_ENTRANCE INTEGER NOT NULL DEFAULT 0,
                 $COLUMN_IS_EXIT INTEGER NOT NULL DEFAULT 0,
                 $COLUMN_IS_LINKABLE INTEGER,
+                $COLUMN_DISPLAY_NAME TEXT,
                 PRIMARY KEY($COLUMN_ROOM_ID, $COLUMN_CELL_ID),
                 FOREIGN KEY($COLUMN_ROOM_ID) REFERENCES $TABLE_ROOMS($COLUMN_ID) ON DELETE CASCADE
             )

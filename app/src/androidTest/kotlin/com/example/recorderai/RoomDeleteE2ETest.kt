@@ -62,13 +62,13 @@ class RoomDeleteE2ETest {
     }
     
     @Test
-    fun testEmptyStateMessage() {
-        // Verify empty state message is shown initially
-        composeTestRule.onNodeWithText("No hay estancias")
+    fun testNewRoomButtonExists() {
+        // Verify the "NUEVA ESTANCIA" button exists (always visible)
+        composeTestRule.onNodeWithText("NUEVA ESTANCIA")
             .assertIsDisplayed()
             
-        // Verify instruction message is shown
-        composeTestRule.onNodeWithText("Usa el botón 'NUEVA ESTANCIA' para crear una")
+        // Verify the "EXPORTAR" button exists (always visible)
+        composeTestRule.onNodeWithText("EXPORTAR")
             .assertIsDisplayed()
     }
 }

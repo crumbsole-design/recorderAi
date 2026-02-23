@@ -7,6 +7,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -18,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -39,12 +41,18 @@ fun CellDetailScreen(
     
     val cellDataCounts by viewModel.cellDataCounts.collectAsState()
     val currentCellLinkableStatus by viewModel.currentCellLinkableStatus.collectAsState()
+    val currentCellDisplayName by viewModel.currentCellDisplayName.collectAsState()
     val hasCellData by viewModel.hasCellData.collectAsState()
     val activeCells by viewModel.activeCells.collectAsState()
     
     val isRecording = activeCells.contains(cellId)
     val totalDataCount = cellDataCounts.values.sum()
     
+    // Estado para el diálogo de configuración
+    var showConfigDialog by remember { mutableStateOf(false) }
+    var configIsLinkable by remember { mutableStateOf(false) }
+    var configDisplayName by remember { mutableStateOf("") }
+
     // Permisos necesarios para la recolección
     val requiredPermissions = remember {
         buildList {
@@ -131,7 +139,15 @@ fun CellDetailScreen(
         ) {
             // Estado de la celda
             Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (currentCellLinkableStatus == null) {
+                            Modifier.clickable {
+                                showConfigDialog = true
+                            }
+                        } else Modifier
+                    ),
                 colors = CardDefaults.cardColors(
                     containerColor = when {
                         currentCellLinkableStatus == true -> Color(0xff66BB6A)
@@ -162,6 +178,16 @@ fun CellDetailScreen(
                         fontSize = 14.sp,
                         color = Color.White.copy(alpha = 0.8f)
                     )
+                    // Mostrar displayName si existe
+                    currentCellDisplayName?.let { displayName ->
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "Nombre: $displayName",
+                            fontSize = 14.sp,
+                            color = Color.White.copy(alpha = 0.9f),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
             }
 
@@ -296,6 +322,72 @@ fun CellDetailScreen(
                 modifier = Modifier.padding(horizontal = 16.dp)
             )
         }
+    }
+
+    // Diálogo de configuración
+    if (showConfigDialog) {
+        AlertDialog(
+            onDismissRequest = { showConfigDialog = false },
+            title = { Text("Configurar Celda $cellId") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text("Configura las propiedades de esta celda:")
+
+                    // Checkbox para enlazable
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { configIsLinkable = !configIsLinkable },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = configIsLinkable,
+                            onCheckedChange = { configIsLinkable = it },
+                            modifier = Modifier.testTag("linkableCheckbox")
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Habilitar como celda enlazable a otras estancias")
+                    }
+
+                    // Campo de texto para nombre descriptivo
+                    OutlinedTextField(
+                        value = configDisplayName,
+                        onValueChange = { configDisplayName = it },
+                        label = { Text("Nombre descriptivo (opcional)") },
+                        placeholder = { Text("Ej: Puerta principal, Ventana...") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            viewModel.configureCellAttribute(
+                                roomId = room.id,
+                                cellId = cellId,
+                                isLinkable = configIsLinkable,
+                                displayName = configDisplayName.takeIf { it.isNotBlank() }
+                            )
+                            showConfigDialog = false
+                            // Recargar datos de la celda
+                            viewModel.loadCellDataCounts(room.id, cellId)
+                        }
+                    }
+                ) {
+                    Text("Guardar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfigDialog = false }) {
+                    Text("Cancelar")
+                }
+            }
+        )
     }
 }
 

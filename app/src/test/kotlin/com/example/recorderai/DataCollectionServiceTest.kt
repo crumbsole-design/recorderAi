@@ -17,10 +17,17 @@ import android.net.Uri
 import android.net.wifi.ScanResult as WifiScanResult
 import android.net.wifi.WifiManager
 import android.telephony.*
+import com.example.recorderai.data.ScanDataEntity
+import com.example.recorderai.model.MagnetometerInfo
 import com.example.recorderai.model.ScanRecord
 import com.example.recorderai.model.GeoLocation
+import com.example.recorderai.model.WifiInfo
+import com.example.recorderai.model.BtInfo
+import com.example.recorderai.model.CellInfo
+import com.example.recorderai.data.ScanDao
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import io.mockk.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -326,6 +333,435 @@ class DataCollectionServiceTest {
             
             // With Robolectric, we could use ShadowApplication to verify broadcasts
             // For now, test passes if no exception is thrown
+        }
+    }
+
+    @Nested
+    inner class `saveDataToDb` {
+
+        // Helper function to call saveDataToDb directly (now that it's internal)
+        private suspend fun callSaveDataToDb(service: DataCollectionService, record: ScanRecord, type: String) {
+            service.saveDataToDb(record, type)
+        }
+
+        @Test
+        fun `saveDataToDb should save data when sessionId is valid`() = runTest {
+            // Given - Create service and inject mocked DAO
+            val mockDao = mockk<ScanDao>(relaxed = true)
+            coEvery { mockDao.insertData(any()) } returns 1L
+
+            // Create a new service instance for this test
+            val service = DataCollectionService()
+            val context = RuntimeEnvironment.getApplication()
+            val attachBaseContext = android.content.ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
+            attachBaseContext.isAccessible = true
+            attachBaseContext.invoke(service, context)
+            
+            // Inject mocked DAO via reflection
+            val daoField = service.javaClass.getDeclaredField("dao")
+            daoField.isAccessible = true
+            daoField.set(service, mockDao)
+            
+            // Set currentSessionId to a valid value
+            val sessionIdField = service.javaClass.getDeclaredField("currentSessionId")
+            sessionIdField.isAccessible = true
+            sessionIdField.set(service, 1L)
+            
+            // Create a test record with all 4 data types
+            val record = ScanRecord(
+                timestamp = 1000L,
+                readableTime = "01/01/2024 12:00:00",
+                location = GeoLocation(40.0, -74.0, 5f, 100.0),
+                wifiNetworks = listOf(WifiInfo("TestNet", "00:11:22:33:44:55", -50, 2412, "WPA2")),
+                bluetoothDevices = listOf(BtInfo("BTDevice", "AA:BB:CC:DD:EE:FF", -60)),
+                cellTowers = listOf(CellInfo("LTE", 12345, 100, -70)),
+                magnetometer = MagnetometerInfo(25.0f, 5.0f, 10.0f, 27.0f),
+                audioFilename = "SUSPENDED"
+            )
+            
+            // When - Call saveDataToDb
+            callSaveDataToDb(service, record, "WIFI")
+
+            // Then - Verify DAO was called
+            coVerify { mockDao.insertData(any()) }
+        }
+
+        @Test
+        fun `saveDataToDb should NOT save data when sessionId is -1`() = runTest {
+            // Given - Create service and inject mocked DAO
+            val mockDao = mockk<ScanDao>(relaxed = true)
+            coEvery { mockDao.insertData(any()) } returns 1L
+
+            // Create a new service instance for this test
+            val service = DataCollectionService()
+            val context = RuntimeEnvironment.getApplication()
+            val attachBaseContext = android.content.ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
+            attachBaseContext.isAccessible = true
+            attachBaseContext.invoke(service, context)
+            
+            // Inject mocked DAO via reflection
+            val daoField = service.javaClass.getDeclaredField("dao")
+            daoField.isAccessible = true
+            daoField.set(service, mockDao)
+            
+            // Set currentSessionId to -1 (not recording)
+            val sessionIdField = service.javaClass.getDeclaredField("currentSessionId")
+            sessionIdField.isAccessible = true
+            sessionIdField.set(service, -1L)
+            
+            // Create a test record
+            val record = ScanRecord(
+                timestamp = 1000L,
+                readableTime = "01/01/2024 12:00:00",
+                location = GeoLocation(40.0, -74.0, 5f, 100.0),
+                wifiNetworks = listOf(WifiInfo("TestNet", "00:11:22:33:44:55", -50, 2412, "WPA2")),
+                bluetoothDevices = listOf(BtInfo("BTDevice", "AA:BB:CC:DD:EE:FF", -60)),
+                cellTowers = listOf(CellInfo("LTE", 12345, 100, -70)),
+                magnetometer = MagnetometerInfo(25.0f, 5.0f, 10.0f, 27.0f),
+                audioFilename = "SUSPENDED"
+            )
+            
+            // When - Call saveDataToDb
+            callSaveDataToDb(service, record, "WIFI")
+
+            // Then - Verify DAO was NOT called
+            coVerify(exactly = 0) { mockDao.insertData(any()) }
+        }
+
+        @Test
+        fun `saveDataToDb should save BT_MAGNET type correctly`() = runTest {
+            // Given - Create service and inject mocked DAO
+            val mockDao = mockk<ScanDao>(relaxed = true)
+            coEvery { mockDao.insertData(any()) } returns 1L
+
+            // Create a new service instance for this test
+            val service = DataCollectionService()
+            val context = RuntimeEnvironment.getApplication()
+            val attachBaseContext = android.content.ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
+            attachBaseContext.isAccessible = true
+            attachBaseContext.invoke(service, context)
+            
+            // Inject mocked DAO via reflection
+            val daoField = service.javaClass.getDeclaredField("dao")
+            daoField.isAccessible = true
+            daoField.set(service, mockDao)
+            
+            // Set currentSessionId to a valid value
+            val sessionIdField = service.javaClass.getDeclaredField("currentSessionId")
+            sessionIdField.isAccessible = true
+            sessionIdField.set(service, 1L)
+            
+            // Create a test record with BT and magnetometer data
+            val record = ScanRecord(
+                timestamp = 1000L,
+                readableTime = "01/01/2024 12:00:00",
+                location = GeoLocation(40.0, -74.0, 5f, 100.0),
+                wifiNetworks = emptyList(),
+                bluetoothDevices = listOf(BtInfo("BTDevice", "AA:BB:CC:DD:EE:FF", -60)),
+                cellTowers = emptyList(),
+                magnetometer = MagnetometerInfo(25.0f, 5.0f, 10.0f, 27.0f),
+                audioFilename = "SUSPENDED"
+            )
+            
+            // When - Call saveDataToDb with BLUETOOTH type
+            callSaveDataToDb(service, record, "BLUETOOTH")
+
+            // Then - Verify DAO was called with correct type
+            coVerify { mockDao.insertData(match { it.type == "BLUETOOTH" }) }
+        }
+
+        @Test
+        fun `saveDataToDb should serialize record to JSON correctly`() = runTest {
+            // Given - Create service and inject mocked DAO
+            val mockDao = mockk<ScanDao>(relaxed = true)
+            val dataSlot = slot<ScanDataEntity>()
+            coEvery { mockDao.insertData(capture(dataSlot)) } returns 1L
+            
+            // Create a new service instance for this test
+            val service = DataCollectionService()
+            val context = RuntimeEnvironment.getApplication()
+            val attachBaseContext = android.content.ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
+            attachBaseContext.isAccessible = true
+            attachBaseContext.invoke(service, context)
+            
+            // Inject mocked DAO via reflection
+            val daoField = service.javaClass.getDeclaredField("dao")
+            daoField.isAccessible = true
+            daoField.set(service, mockDao)
+            
+            // Set currentSessionId to a valid value
+            val sessionIdField = service.javaClass.getDeclaredField("currentSessionId")
+            sessionIdField.isAccessible = true
+            sessionIdField.set(service, 1L)
+            
+            // Create a test record with all data types
+            val record = ScanRecord(
+                timestamp = 1000L,
+                readableTime = "01/01/2024 12:00:00",
+                location = GeoLocation(40.0, -74.0, 5f, 100.0),
+                wifiNetworks = listOf(WifiInfo("TestNet", "00:11:22:33:44:55", -50, 2412, "WPA2")),
+                bluetoothDevices = listOf(BtInfo("BTDevice", "AA:BB:CC:DD:EE:FF", -60)),
+                cellTowers = listOf(CellInfo("LTE", 12345, 100, -70)),
+                magnetometer = MagnetometerInfo(25.0f, 5.0f, 10.0f, 27.0f),
+                audioFilename = "SUSPENDED"
+            )
+            
+            // When - Call saveDataToDb
+            callSaveDataToDb(service, record, "WIFI")
+
+            // Then - Verify JSON content contains expected fields
+            val captured = dataSlot.captured
+            captured.sessionId shouldBe 1L
+            captured.type shouldBe "WIFI"
+            captured.timestamp shouldBe 1000L
+            captured.content shouldNotBe null
+            // Verify JSON contains key data
+            org.junit.jupiter.api.Assertions.assertTrue(captured.content.contains("TestNet"))
+            org.junit.jupiter.api.Assertions.assertTrue(captured.content.contains("00:11:22:33:44:55"))
+            org.junit.jupiter.api.Assertions.assertTrue(captured.content.contains("BTDevice"))
+            org.junit.jupiter.api.Assertions.assertTrue(captured.content.contains("LTE"))
+        }
+
+        @Test
+        fun `saveDataToDb should save WiFi data type individually`() = runTest {
+            // Given
+            val mockDao = mockk<ScanDao>(relaxed = true)
+            val dataSlot = slot<ScanDataEntity>()
+            coEvery { mockDao.insertData(capture(dataSlot)) } returns 1L
+
+            val service = DataCollectionService()
+            val context = RuntimeEnvironment.getApplication()
+            val attachBaseContext = android.content.ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
+            attachBaseContext.isAccessible = true
+            attachBaseContext.invoke(service, context)
+
+            val daoField = service.javaClass.getDeclaredField("dao")
+            daoField.isAccessible = true
+            daoField.set(service, mockDao)
+
+            val sessionIdField = service.javaClass.getDeclaredField("currentSessionId")
+            sessionIdField.isAccessible = true
+            sessionIdField.set(service, 5L)
+
+            // Record with only WiFi data
+            val record = ScanRecord(
+                timestamp = 2000L,
+                readableTime = "01/01/2024 13:00:00",
+                location = GeoLocation(41.0, -75.0, 3f, 50.0),
+                wifiNetworks = listOf(
+                    WifiInfo("Network1", "AA:BB:CC:DD:EE:FF", -55, 2437, "WPA3"),
+                    WifiInfo("Network2", "11:22:33:44:55:66", -68, 5180, "WPA2")
+                ),
+                bluetoothDevices = emptyList(),
+                cellTowers = emptyList(),
+                magnetometer = null,
+                audioFilename = "SUSPENDED"
+            )
+
+        // When - Use helper function instead of reflection for suspend function
+            callSaveDataToDb(service, record, "WIFI")
+
+            // Then
+            val captured = dataSlot.captured
+            captured.sessionId shouldBe 5L
+            captured.type shouldBe "WIFI"
+            org.junit.jupiter.api.Assertions.assertTrue(captured.content.contains("Network1"))
+            org.junit.jupiter.api.Assertions.assertTrue(captured.content.contains("Network2"))
+            org.junit.jupiter.api.Assertions.assertTrue(captured.content.contains("5180"))
+        }
+
+        @Test
+        fun `saveDataToDb should save Bluetooth data type individually`() = runTest {
+            // Given
+            val mockDao = mockk<ScanDao>(relaxed = true)
+            val dataSlot = slot<ScanDataEntity>()
+            coEvery { mockDao.insertData(capture(dataSlot)) } returns 1L
+
+            val service = DataCollectionService()
+            val context = RuntimeEnvironment.getApplication()
+            val attachBaseContext = android.content.ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
+            attachBaseContext.isAccessible = true
+            attachBaseContext.invoke(service, context)
+
+            val daoField = service.javaClass.getDeclaredField("dao")
+            daoField.isAccessible = true
+            daoField.set(service, mockDao)
+
+            val sessionIdField = service.javaClass.getDeclaredField("currentSessionId")
+            sessionIdField.isAccessible = true
+            sessionIdField.set(service, 3L)
+
+            // Record with only Bluetooth data
+            val record = ScanRecord(
+                timestamp = 3000L,
+                readableTime = "01/01/2024 14:00:00",
+                location = GeoLocation(42.0, -76.0, 4f, 75.0),
+                wifiNetworks = emptyList(),
+                bluetoothDevices = listOf(
+                    BtInfo("HeadphonesXYZ", "AA:11:22:33:44:55", -65),
+                    BtInfo("Speaker123", "BB:11:22:33:44:55", -72)
+                ),
+                cellTowers = emptyList(),
+                magnetometer = null,
+                audioFilename = "SUSPENDED"
+            )
+
+            // When - Use helper function instead of reflection for suspend function
+            callSaveDataToDb(service, record, "BLUETOOTH")
+
+            // Then
+            val captured = dataSlot.captured
+            captured.sessionId shouldBe 3L
+            captured.type shouldBe "BLUETOOTH"
+            org.junit.jupiter.api.Assertions.assertTrue(captured.content.contains("HeadphonesXYZ"))
+            org.junit.jupiter.api.Assertions.assertTrue(captured.content.contains("Speaker123"))
+        }
+
+        @Test
+        fun `saveDataToDb should save Cell data type individually`() = runTest {
+            // Given
+            val mockDao = mockk<ScanDao>(relaxed = true)
+            val dataSlot = slot<ScanDataEntity>()
+            coEvery { mockDao.insertData(capture(dataSlot)) } returns 1L
+
+            val service = DataCollectionService()
+            val context = RuntimeEnvironment.getApplication()
+            val attachBaseContext = android.content.ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
+            attachBaseContext.isAccessible = true
+            attachBaseContext.invoke(service, context)
+
+            val daoField = service.javaClass.getDeclaredField("dao")
+            daoField.isAccessible = true
+            daoField.set(service, mockDao)
+
+            val sessionIdField = service.javaClass.getDeclaredField("currentSessionId")
+            sessionIdField.isAccessible = true
+            sessionIdField.set(service, 7L)
+
+            // Record with only Cell data
+            val record = ScanRecord(
+                timestamp = 4000L,
+                readableTime = "01/01/2024 15:00:00",
+                location = GeoLocation(43.0, -77.0, 6f, 120.0),
+                wifiNetworks = emptyList(),
+                bluetoothDevices = emptyList(),
+                cellTowers = listOf(
+                    CellInfo("LTE", 54321, 200, -75),
+                    CellInfo("5G", 98765, 300, -82)
+                ),
+                magnetometer = null,
+                audioFilename = "SUSPENDED"
+            )
+
+            // When - Use helper function instead of reflection for suspend function
+            callSaveDataToDb(service, record, "CELL")
+
+            // Then
+            val captured = dataSlot.captured
+            captured.sessionId shouldBe 7L
+            captured.type shouldBe "CELL"
+            org.junit.jupiter.api.Assertions.assertTrue(captured.content.contains("54321"))
+            org.junit.jupiter.api.Assertions.assertTrue(captured.content.contains("5G"))
+        }
+
+        @Test
+        fun `saveDataToDb should save Magnetometer data correctly`() = runTest {
+            // Given
+            val mockDao = mockk<ScanDao>(relaxed = true)
+            val dataSlot = slot<ScanDataEntity>()
+            coEvery { mockDao.insertData(capture(dataSlot)) } returns 1L
+
+            val service = DataCollectionService()
+            val context = RuntimeEnvironment.getApplication()
+            val attachBaseContext = android.content.ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
+            attachBaseContext.isAccessible = true
+            attachBaseContext.invoke(service, context)
+
+            val daoField = service.javaClass.getDeclaredField("dao")
+            daoField.isAccessible = true
+            daoField.set(service, mockDao)
+
+            val sessionIdField = service.javaClass.getDeclaredField("currentSessionId")
+            sessionIdField.isAccessible = true
+            sessionIdField.set(service, 9L)
+
+            // Record with magnetometer data
+            val record = ScanRecord(
+                timestamp = 5000L,
+                readableTime = "01/01/2024 16:00:00",
+                location = GeoLocation(44.0, -78.0, 2f, 90.0),
+                wifiNetworks = emptyList(),
+                bluetoothDevices = emptyList(),
+                cellTowers = emptyList(),
+                magnetometer = MagnetometerInfo(30.5f, -10.2f, 15.8f, 35.7f),
+                audioFilename = "SUSPENDED"
+            )
+
+            // When
+            callSaveDataToDb(service, record, "MAGNETOMETER")
+
+            // Then
+            val captured = dataSlot.captured
+            captured.sessionId shouldBe 9L
+            captured.type shouldBe "MAGNETOMETER"
+            org.junit.jupiter.api.Assertions.assertTrue(captured.content.contains("30.5"))
+            org.junit.jupiter.api.Assertions.assertTrue(captured.content.contains("-10.2"))
+            org.junit.jupiter.api.Assertions.assertTrue(captured.content.contains("35.7"))
+        }
+
+        @Test
+        fun `saveDataToDb should handle multiple sequential saves`() = runTest {
+            // Given
+            val mockDao = mockk<ScanDao>(relaxed = true)
+            val capturedData = mutableListOf<ScanDataEntity>()
+            coEvery { mockDao.insertData(capture(capturedData)) } returns 1L
+
+            val service = DataCollectionService()
+            val context = RuntimeEnvironment.getApplication()
+            val attachBaseContext = android.content.ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java)
+            attachBaseContext.isAccessible = true
+            attachBaseContext.invoke(service, context)
+
+            val daoField = service.javaClass.getDeclaredField("dao")
+            daoField.isAccessible = true
+            daoField.set(service, mockDao)
+
+            val sessionIdField = service.javaClass.getDeclaredField("currentSessionId")
+            sessionIdField.isAccessible = true
+            sessionIdField.set(service, 10L)
+
+            // When - Save multiple records
+            val record1 = ScanRecord(
+                timestamp = 6000L,
+                readableTime = "01/01/2024 17:00:00",
+                location = GeoLocation(45.0, -79.0, 3f, 110.0),
+                wifiNetworks = listOf(WifiInfo("Net1", "AA:AA:AA:AA:AA:AA", -50, 2412, "WPA2")),
+                bluetoothDevices = emptyList(),
+                cellTowers = emptyList(),
+                magnetometer = null,
+                audioFilename = "SUSPENDED"
+            )
+
+            val record2 = ScanRecord(
+                timestamp = 7000L,
+                readableTime = "01/01/2024 17:00:10",
+                location = GeoLocation(45.0, -79.0, 3f, 110.0),
+                wifiNetworks = emptyList(),
+                bluetoothDevices = listOf(BtInfo("Device1", "BB:BB:BB:BB:BB:BB", -60)),
+                cellTowers = emptyList(),
+                magnetometer = MagnetometerInfo(20.0f, 5.0f, 10.0f, 23.0f),
+                audioFilename = "SUSPENDED"
+            )
+
+            callSaveDataToDb(service, record1, "WIFI")
+            callSaveDataToDb(service, record2, "BLUETOOTH")
+
+            // Then
+            capturedData shouldHaveSize 2
+            capturedData[0].type shouldBe "WIFI"
+            capturedData[0].sessionId shouldBe 10L
+            capturedData[1].type shouldBe "BLUETOOTH"
+            capturedData[1].sessionId shouldBe 10L
         }
     }
 }

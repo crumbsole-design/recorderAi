@@ -69,14 +69,15 @@ class ScanDaoImpl(private val dbHelper: DatabaseHelper) : ScanDao {
         db.insert(DatabaseHelper.TABLE_DATA, null, values)
     }
 
-    override suspend fun setCellAttribute(attr: CellAttributeEntity): Unit = withContext(Dispatchers.IO) {
+    override suspend fun setCellAttribute(attribute: CellAttributeEntity): Unit = withContext(Dispatchers.IO) {
         val db = dbHelper.writableDatabase
         val values = ContentValues().apply {
-            put(DatabaseHelper.COLUMN_ROOM_ID, attr.roomId)
-            put(DatabaseHelper.COLUMN_CELL_ID, attr.cellId)
-            put(DatabaseHelper.COLUMN_IS_ENTRANCE, if (attr.isEntrance) 1 else 0)
-            put(DatabaseHelper.COLUMN_IS_EXIT, if (attr.isExit) 1 else 0)
-            attr.isLinkable.toInt()?.let { put(DatabaseHelper.COLUMN_IS_LINKABLE, it) }
+            put(DatabaseHelper.COLUMN_ROOM_ID, attribute.roomId)
+            put(DatabaseHelper.COLUMN_CELL_ID, attribute.cellId)
+            put(DatabaseHelper.COLUMN_IS_ENTRANCE, if (attribute.isEntrance) 1 else 0)
+            put(DatabaseHelper.COLUMN_IS_EXIT, if (attribute.isExit) 1 else 0)
+            attribute.isLinkable.toInt()?.let { put(DatabaseHelper.COLUMN_IS_LINKABLE, it) }
+            attribute.displayName?.let { put(DatabaseHelper.COLUMN_DISPLAY_NAME, it) }
         }
         db.insertWithOnConflict(
             DatabaseHelper.TABLE_ATTRIBUTES,
@@ -250,6 +251,19 @@ class ScanDaoImpl(private val dbHelper: DatabaseHelper) : ScanDao {
         )
     }
 
+    override suspend fun updateRoomName(roomId: Long, newName: String): Unit = withContext(Dispatchers.IO) {
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply {
+            put(DatabaseHelper.COLUMN_NAME, newName)
+        }
+        db.update(
+            DatabaseHelper.TABLE_ROOMS,
+            values,
+            "${DatabaseHelper.COLUMN_ID} = ?",
+            arrayOf(roomId.toString())
+        )
+    }
+
     // Helper extension functions to convert Cursor to entities
 
     private fun Cursor.toRoomEntity() = RoomEntity(
@@ -272,6 +286,9 @@ class ScanDaoImpl(private val dbHelper: DatabaseHelper) : ScanDao {
         isExit = getInt(getColumnIndexOrThrow(DatabaseHelper.COLUMN_IS_EXIT)) == 1,
         isLinkable = getColumnIndex(DatabaseHelper.COLUMN_IS_LINKABLE).let { idx ->
             if (idx >= 0 && !isNull(idx)) getInt(idx).toBoolean() else null
+        },
+        displayName = getColumnIndex(DatabaseHelper.COLUMN_DISPLAY_NAME).let { idx ->
+            if (idx >= 0 && !isNull(idx)) getString(idx) else null
         }
     )
 }
