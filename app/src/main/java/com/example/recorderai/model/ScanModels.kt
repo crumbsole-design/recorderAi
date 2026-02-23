@@ -1,6 +1,6 @@
 package com.example.recorderai.model
 
-// Modelo principal que agrupa todo lo que pasa en un instante T
+// Modelo principal que agrupa todas las cosas que pasa en un instante T
 data class ScanRecord(
     val timestamp: Long,
     val readableTime: String,

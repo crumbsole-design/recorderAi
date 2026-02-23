@@ -67,38 +67,6 @@ class DataCollectionServiceTest {
     }
 
     @Nested
-    inner class `appendLog & setupFiles` {
-        @Test
-        fun `appendLog writes jsonl to currentLogFile`() = runTest {
-            val temp = createTempDir(prefix = "svc")
-            val logFile = File(temp, "scan_log.jsonl")
-            logFile.writeText("")
-
-            // set private field currentLogFile via reflection
-            val f = svc.javaClass.getDeclaredField("currentLogFile").apply { isAccessible = true }
-            f.set(svc, logFile)
-
-            val record = ScanRecord(
-                timestamp = 1L,
-                readableTime = "now",
-                location = com.example.recorderai.model.GeoLocation(1.0, 2.0, 3f, 4.0),
-                wifiNetworks = emptyList(),
-                bluetoothDevices = emptyList(),
-                cellTowers = emptyList(),
-                magnetometer = null,
-                audioFilename = "audio.pcm"
-            )
-
-            svc.appendLog(record)
-
-            val contents = logFile.readText()
-            (contents.contains(record.readableTime)) shouldBe true
-
-            temp.deleteRecursively()
-        }
-    }
-
-    @Nested
     inner class `parseCells` {
         @Test
         fun `should parse CellInfoLte`() {
@@ -358,64 +326,6 @@ class DataCollectionServiceTest {
             
             // With Robolectric, we could use ShadowApplication to verify broadcasts
             // For now, test passes if no exception is thrown
-        }
-
-        @Test @Disabled("Integration test - needs spyk and multiple system service mocks")
-        fun `runBluetoothAndMagnetometerLoop runs one iteration and appends log`() = runTest {
-            val localSvc = spyk(svc)
-            
-            // stub helpers
-            coEvery { localSvc.getFreshLocation(any()) } returns com.example.recorderai.model.GeoLocation(1.0, 2.0, 1f, 0.0)
-            coEvery { localSvc.scanBluetoothSuspend() } returns listOf(com.example.recorderai.model.BtInfo("n", "a", -50))
-            coEvery { localSvc.getFreshMagnetometer(any()) } returns com.example.recorderai.model.MagnetometerInfo(1f, 2f, 3f, 4f)
-
-            // set currentLogFile
-            val temp = createTempDir(prefix = "svcloop")
-            val logFile = File(temp, "scan_log.jsonl")
-            val f = localSvc.javaClass.getDeclaredField("currentLogFile").apply { isAccessible = true }
-            f.set(localSvc, logFile)
-            val audioFile = File(temp, "audio.pcm")
-            val fAudio = localSvc.javaClass.getDeclaredField("currentAudioFile").apply { isAccessible = true }
-            fAudio.set(localSvc, audioFile)
-
-            coEvery { localSvc.appendLog(any()) } answers {
-                // stop after first append
-                localSvc.isRecording = false
-                Unit
-            }
-
-            localSvc.isRecording = true
-            localSvc.runBluetoothAndMagnetometerLoop()
-
-            // appendLog was called => file exists
-            logFile.exists() shouldBe true
-            temp.deleteRecursively()
-        }
-
-        @Test @Disabled("Integration test - needs spyk and multiple system service mocks")
-        fun `runEnvironmentLoop runs one iteration and appends log`() = runTest {
-            val localSvc = spyk(svc)
-            
-            // Fix nullable mocking for getFreshLocation
-            coEvery { localSvc.getFreshLocation(any()) } returns com.example.recorderai.model.GeoLocation(1.0, 2.0, 1f, 0.0)
-            coEvery { localSvc.scanWifiSuspend(any()) } returns emptyList()
-            coEvery { localSvc.getFreshCellInfo(any()) } returns emptyList()
-
-            val temp = createTempDir(prefix = "svcenv")
-            val logFile = File(temp, "scan_log.jsonl")
-            val f = localSvc.javaClass.getDeclaredField("currentLogFile").apply { isAccessible = true }
-            f.set(localSvc, logFile)
-            val audioFile = File(temp, "audio.pcm")
-            val fAudio = localSvc.javaClass.getDeclaredField("currentAudioFile").apply { isAccessible = true }
-            fAudio.set(localSvc, audioFile)
-
-            coEvery { localSvc.appendLog(any()) } answers { localSvc.isRecording = false; Unit }
-
-            localSvc.isRecording = true
-            localSvc.runEnvironmentLoop()
-
-            logFile.exists() shouldBe true
-            temp.deleteRecursively()
         }
     }
 }

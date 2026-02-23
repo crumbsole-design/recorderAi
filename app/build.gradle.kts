@@ -3,8 +3,7 @@ import java.util.concurrent.TimeUnit
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    // ksp plugin temporarily disabled to bypass KSP runtime incompatibility during tests
-} 
+}
 
 apply(plugin = "org.jetbrains.kotlinx.kover")
 
@@ -50,11 +49,6 @@ android {
         compose = true
     }
 }
-kotlin {
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
-    }
-}
 
 
 dependencies {
@@ -66,6 +60,10 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    // Navigation Compose
+    implementation("androidx.navigation:navigation-compose:2.7.7")
+    // ViewModel
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
     // TEST deps
     // JUnit 5 for unit tests
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.9.3")
@@ -88,10 +86,7 @@ dependencies {
     implementation("com.google.accompanist:accompanist-permissions:0.34.0")
     implementation("com.google.code.gson:gson:2.10.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3") // Para el loop de 31s
-    implementation(libs.androidx.room.runtime)
-    implementation(libs.androidx.room.ktx)
-    // ksp(libs.androidx.room.compiler)  // disabled for test run
-}
+}  
 
 // --- Helper task: start emulator if no device is connected (used for debug/instrumented tests) ---
 // AVD name is configurable via project property `emulatorAvd` (e.g. -PemulatorAvd=My_AVD)

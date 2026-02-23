@@ -1,47 +1,42 @@
 package com.example.recorderai.data
 
-import androidx.room.Dao
-import androidx.room.Insert
-import androidx.room.Query
-import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
-@Dao
+/**
+ * Data access interface for scan operations.
+ * Implemented by ScanDaoImpl using direct SQLite.
+ */
 interface ScanDao {
-    @Insert
     suspend fun insertRoom(room: RoomEntity): Long
 
-    @Query("SELECT * FROM rooms")
     fun getAllRooms(): Flow<List<RoomEntity>>
 
-    @Insert
     suspend fun insertSession(session: ScanSessionEntity): Long
 
-    @Insert
-    suspend fun insertData(data: ScanDataEntity)
+    suspend fun insertData(data: ScanDataEntity): Long
 
-    @Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
     suspend fun setCellAttribute(attribute: CellAttributeEntity)
 
-    @Query("SELECT * FROM cell_attributes WHERE roomId = :roomId")
-    fun getCellAttributes(roomId: Long): Flow<List<CellAttributeEntity>>
+    fun getCellAttribute(roomId: Long, cellId: Int): Flow<CellAttributeEntity?>
 
-    @Query("SELECT * FROM scan_data WHERE sessionId = :sessionId")
-    fun getSessionData(sessionId: Long): List<ScanDataEntity>
-    
-    // Aggregation for grid visualization
-    @Query("""
-        SELECT s.cellId, d.type, COUNT(*) as count 
-        FROM scan_sessions s
-        JOIN scan_data d ON s.id = d.sessionId
-        WHERE s.roomId = :roomId
-        GROUP BY s.cellId, d.type
-    """)
-    fun getScanCounts(roomId: Long): Flow<List<ScanCount>>
+    fun getSessionByRoomAndCell(roomId: Long, cellId: Int): Flow<ScanSessionEntity?>
+
+    fun getSessionsByRoom(roomId: Long): Flow<List<ScanSessionEntity>>
+
+    suspend fun updateCellLinkableStatus(roomId: Long, cellId: Int, isLinkable: Boolean?)
+
+    suspend fun deleteCellData(roomId: Long, cellId: Int)
+
+    suspend fun deleteSessionsByCell(roomId: Long, cellId: Int)
+
+    suspend fun deleteCellAttribute(roomId: Long, cellId: Int)
+
+    // Aggregation for grid visualization - returns map of cellId to count
+    fun getScanCounts(roomId: Long): Flow<Map<Int, Int>>
+
+    // Get scan data counts by type for a specific cell
+    fun getScanDataCountsByType(roomId: Long, cellId: Int): Flow<Map<String, Int>>
+
+    // Delete a room and all associated data
+    suspend fun deleteRoom(roomId: Long)
 }
-
-data class ScanCount(
-    val cellId: Int,
-    val type: String,
-    val count: Int
-)

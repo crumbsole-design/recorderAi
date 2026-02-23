@@ -29,7 +29,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.lifecycle.ViewModelProvider
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import com.example.recorderai.data.AppDatabase
+import com.example.recorderai.data.ScanRepository
+import com.example.recorderai.ui.screens.CellDetailScreen
+import com.example.recorderai.ui.screens.RoomGridScreen
+import com.example.recorderai.ui.screens.RoomListScreen
 import com.example.recorderai.ui.theme.RecorderAiTheme
+import com.example.recorderai.ui.viewmodels.RoomGridViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -44,7 +55,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    WardrivingScreen()
+                    MainNavigation()
                 }
             }
         }
@@ -52,19 +63,79 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun WardrivingScreen() {
+fun MainNavigation() {
+    val navController = rememberNavController()
+    val context = LocalContext.current
+    
+    // Initialize ViewModel and Repository with SQLite-based DAO
+    val dao = AppDatabase.getInstance(context)
+    val repository = ScanRepository(dao)
+    val viewModel = remember { RoomGridViewModel(repository) }
+
+    NavHost(navController = navController, startDestination = "room_list") {
+        composable("room_list") {
+            RoomListScreenWithControls(
+                viewModel = viewModel,
+                onRoomSelected = { roomId ->
+                    navController.navigate("room_grid/$roomId")
+                }
+            )
+        }
+        composable("room_grid/{roomId}") { backStackEntry ->
+            val roomId = backStackEntry.arguments?.getString("roomId")?.toLongOrNull() ?: return@composable
+            val room = viewModel.rooms.collectAsState().value.find { it.id == roomId }
+            if (room != null) {
+                // ARREGLO: Llamar selectRoom para cargar los atributos de celda
+                LaunchedEffect(roomId) {
+                    viewModel.selectRoom(roomId)
+                }
+                RoomGridScreen(
+                    viewModel = viewModel,
+                    room = room,
+                    onCellClick = { cellId ->
+                        navController.navigate("cell_detail/$roomId/$cellId")
+                    },
+                    onBackClick = { navController.popBackStack() }
+                )
+            }
+        }
+        composable("cell_detail/{roomId}/{cellId}") { backStackEntry ->
+            val roomId = backStackEntry.arguments?.getString("roomId")?.toLongOrNull() ?: return@composable
+            val cellId = backStackEntry.arguments?.getString("cellId")?.toIntOrNull() ?: return@composable
+            val room = viewModel.rooms.collectAsState().value.find { it.id == roomId }
+            if (room != null) {
+                LaunchedEffect(roomId, cellId) {
+                    viewModel.selectRoom(roomId)
+                    viewModel.loadCellDataCounts(roomId, cellId)
+                }
+                CellDetailScreen(
+                    viewModel = viewModel,
+                    room = room,
+                    cellId = cellId,
+                    onBackClick = { navController.popBackStack() }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun RoomListScreenWithControls(
+    viewModel: RoomGridViewModel,
+    onRoomSelected: (Long) -> Unit
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // Comprobamos estado inicial
     var isServiceRunning by remember { mutableStateOf(isServiceRunning(context)) }
     var isExporting by remember { mutableStateOf(false) }
-
-    // Estado UI
     var lastCaptureTime by remember { mutableStateOf("Esperando datos...") }
     var wifiCount by remember { mutableStateOf(0) }
+    
+    // Estado para el diálogo de crear nueva estancia
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var roomName by remember { mutableStateOf("") }
 
-    // --- RECEPTOR DE SEÑAL ---
     DisposableEffect(Unit) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
@@ -79,7 +150,6 @@ fun WardrivingScreen() {
         onDispose { context.unregisterReceiver(receiver) }
     }
 
-    // --- PERMISOS ---
     val permissionsToRequest = remember {
         buildList {
             add(Manifest.permission.RECORD_AUDIO)
@@ -97,7 +167,6 @@ fun WardrivingScreen() {
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { perms ->
-        // Si todos son true, iniciamos
         if (perms.values.all { it }) {
             startWardrivingService(context)
             isServiceRunning = true
@@ -106,81 +175,160 @@ fun WardrivingScreen() {
         }
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        // Indicador
-        Box(
+    Box(modifier = Modifier.fillMaxSize()) {
+        RoomListScreen(
+            viewModel = viewModel,
+            onRoomSelected = onRoomSelected
+        )
+
+        // Control Panel Overlay (bottom-right corner)
+        Column(
             modifier = Modifier
-                .size(120.dp)
-                .background(if (isServiceRunning) Color.Red else Color.Gray, CircleShape),
-            contentAlignment = Alignment.Center
+                .align(Alignment.BottomEnd)
+                .padding(16.dp)
+                .background(
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                    shape = MaterialTheme.shapes.large
+                )
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(if (isServiceRunning) "ON" else "OFF", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-        }
+            // Status indicator
+            Box(
+                modifier = Modifier
+                    .size(60.dp)
+                    .background(if (isServiceRunning) Color(0xffEF5350) else Color.Gray, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (isServiceRunning) "ON" else "OFF",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
 
-        Spacer(modifier = Modifier.height(32.dp))
+            // Status text
+            Text(
+                lastCaptureTime,
+                fontSize = 10.sp,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                "WiFi: $wifiCount",
+                fontSize = 10.sp,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.fillMaxWidth()
+            )
 
-        // Info Card
-        Card(
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("ÚLTIMA CAPTURA:", style = MaterialTheme.typography.labelSmall)
-                Text(lastCaptureTime, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("Redes WiFi: $wifiCount", style = MaterialTheme.typography.bodyMedium)
+            // Nueva Estancia button
+            Button(
+                onClick = { showCreateDialog = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.tertiary
+                ),
+                contentPadding = PaddingValues(4.dp)
+            ) {
+                Text(
+                    "NUEVA ESTANCIA",
+                    fontSize = 12.sp
+                )
+            }
+
+            // Start/Stop button
+            Button(
+                onClick = {
+                    if (isServiceRunning) {
+                        stopWardrivingService(context)
+                        isServiceRunning = false
+                    } else {
+                        if (hasAllPermissions(context, permissionsToRequest)) {
+                            startWardrivingService(context)
+                            isServiceRunning = true
+                        } else {
+                            permissionLauncher.launch(permissionsToRequest)
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isServiceRunning) Color.DarkGray else MaterialTheme.colorScheme.primary
+                ),
+                contentPadding = PaddingValues(4.dp)
+            ) {
+                Text(
+                    if (isServiceRunning) "DETENER" else "INICIAR",
+                    fontSize = 12.sp
+                )
+            }
+
+            // Export button
+            Button(
+                onClick = {
+                    if (isServiceRunning) {
+                        Toast.makeText(context, "Detén la grabación primero", Toast.LENGTH_SHORT).show()
+                    } else {
+                        scope.launch {
+                            isExporting = true
+                            exportLastSession(context)
+                            isExporting = false
+                        }
+                    }
+                },
+                enabled = !isExporting,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                contentPadding = PaddingValues(4.dp)
+            ) {
+                Text(
+                    if (isExporting) "EXPORTANDO..." else "EXPORTAR",
+                    fontSize = 12.sp
+                )
             }
         }
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        // Botón START / STOP
-        Button(
-            onClick = {
-                if (isServiceRunning) {
-                    stopWardrivingService(context)
-                    isServiceRunning = false
-                } else {
-                    // AQUÍ ESTÁ LA CLAVE: Verificamos permisos reales
-                    if (hasAllPermissions(context, permissionsToRequest)) {
-                        startWardrivingService(context)
-                        isServiceRunning = true
-                    } else {
-                        permissionLauncher.launch(permissionsToRequest)
+    }
+    
+    // Diálogo para crear nueva estancia
+    if (showCreateDialog) {
+        AlertDialog(
+            onDismissRequest = { showCreateDialog = false },
+            title = { Text("Nueva Estancia") },
+            text = {
+                OutlinedTextField(
+                    value = roomName,
+                    onValueChange = { roomName = it },
+                    label = { Text("Nombre de la estancia") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (roomName.isNotBlank()) {
+                            viewModel.createRoom(roomName)
+                            roomName = ""
+                            showCreateDialog = false
+                        }
                     }
+                ) {
+                    Text("Crear")
                 }
             },
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = if (isServiceRunning) Color.DarkGray else MaterialTheme.colorScheme.primary)
-        ) {
-            Text(if (isServiceRunning) "DETENER" else "INICIAR ESCANEO")
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Botón EXPORTAR
-        Button(
-            onClick = {
-                if (isServiceRunning) {
-                    Toast.makeText(context, "Detén la grabación primero", Toast.LENGTH_SHORT).show()
-                } else {
-                    scope.launch {
-                        isExporting = true
-                        exportLastSession(context)
-                        isExporting = false
-                    }
+            dismissButton = {
+                TextButton(onClick = { showCreateDialog = false }) {
+                    Text("Cancelar")
                 }
-            },
-            enabled = !isExporting,
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-        ) {
-            if (isExporting) CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
-            else Text("EXPORTAR ZIP")
-        }
+            }
+        )
     }
 }
 

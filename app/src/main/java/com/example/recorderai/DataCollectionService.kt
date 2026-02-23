@@ -65,13 +65,19 @@ class DataCollectionService : Service() {
     private val gson = GsonBuilder().serializeNulls().create()
 
     private var wakeLock: PowerManager.WakeLock? = null
-    private val fileMutex = Mutex()
     @Volatile private var lastKnownWifiCount = 0
 
     companion object {
         const val ACTION_CAPTURE_UPDATE = "com.example.recorderai.CAPTURE_UPDATE"
         const val EXTRA_LAST_CAPTURE_TIME = "extra_time"
         const val EXTRA_WIFI_COUNT = "extra_wifi_count"
+        
+        const val ACTION_SET_SESSION = "com.example.recorderai.SET_SESSION"
+        const val ACTION_STOP_SESSION = "com.example.recorderai.STOP_SESSION"
+        const val EXTRA_SESSION_ID = "extra_session_id"
+        const val EXTRA_ROOM_ID = "extra_room_id"
+        const val EXTRA_CELL_ID = "extra_cell_id"
+        
         private const val TAG = "WardrivingService"
 
         private const val SAMPLE_RATE = 16000
@@ -89,18 +95,33 @@ class DataCollectionService : Service() {
         private const val NOTIFICATION_ID = 1
     }
 
-    private lateinit var sessionDir: File
-    private lateinit var currentAudioFile: File
-    private lateinit var currentLogFile: File
-
     // DB & Session
-    private lateinit var db: AppDatabase
-    private var currentSessionId: Long = -1L
+    private lateinit var dao: com.example.recorderai.data.ScanDao
+    @Volatile internal var currentSessionId: Long = -1L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         acquireWakeLock()
+        
+        // Handle session control intents from ViewModel
+        if (intent?.action == ACTION_SET_SESSION) {
+            val sessionId = intent.getLongExtra(EXTRA_SESSION_ID, -1L)
+            val roomId = intent.getLongExtra(EXTRA_ROOM_ID, -1L)
+            val cellId = intent.getIntExtra(EXTRA_CELL_ID, -1)
+            if (sessionId != -1L && roomId != -1L && cellId != -1) {
+                currentSessionId = sessionId
+                Log.d(TAG, "Session set to $sessionId for room $roomId cell $cellId")
+            }
+            return START_STICKY
+        }
+        
+        if (intent?.action == ACTION_STOP_SESSION) {
+            currentSessionId = -1L
+            Log.d(TAG, "Session stopped")
+            return START_STICKY
+        }
+        
         try {
             startForegroundServiceNotification()
         } catch (e: Exception) {
@@ -111,26 +132,17 @@ class DataCollectionService : Service() {
 
         if (!isRecording) {
             isRecording = true
-            setupFiles()
             
-            // Init DB
-            db = AppDatabase.getInstance(applicationContext)
-            serviceScope.launch(Dispatchers.IO) {
-                // Create default room/session for immediate testing
-                val dao = db.scanDao()
-                val roomName = "Room_${System.currentTimeMillis()}"
-                val roomId = dao.insertRoom(RoomEntity(name = roomName, timestamp = System.currentTimeMillis()))
-                currentSessionId = dao.insertSession(ScanSessionEntity(roomId = roomId, cellId = 0, timestamp = System.currentTimeMillis()))
-            }
+            // Init DB - AppDatabase.getInstance now returns ScanDao directly
+            dao = AppDatabase.getInstance(applicationContext)
 
-           // startAudioRecording()
             // Lanzamos bucles paralelos
-            serviceScope.launch { runBluetoothAndMagnetometerLoop() } // NOMBRE ACTUALIZADO
+            // Los datos solo se guardarán si currentSessionId != -1L (configurado desde UI)
+            serviceScope.launch { runBluetoothAndMagnetometerLoop() }
             serviceScope.launch { runEnvironmentLoop() }
         }
         return START_STICKY
     }
-
     // --- BUCLES ---
 
     // Este bucle corre cada ~10 segundos (Bluetooth + Magnetómetro)
@@ -164,7 +176,6 @@ class DataCollectionService : Service() {
                 audioFilename = "SUSPENDED"
             )
 
-            appendLog(record)
             saveDataToDb(record, "BT_MAGNET")
             sendUiUpdate(readableTime)
 
@@ -201,7 +212,6 @@ class DataCollectionService : Service() {
                 audioFilename = "SUSPENDED"
             )
 
-            appendLog(record)
             saveDataToDb(record, "WIFI_CELL")
             sendUiUpdate(readableTime)
             delay(25000L) // Ciclo ~30s
@@ -422,15 +432,6 @@ class DataCollectionService : Service() {
         wakeLock?.acquire(4*60*60*1000L)
     }
 
-    internal fun setupFiles() {
-        val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val rootDir = getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS) ?: filesDir
-        sessionDir = File(rootDir, "RecorderAI/Session_$timeStamp")
-        if (!sessionDir.exists()) sessionDir.mkdirs()
-        currentAudioFile = File(sessionDir, "audio_raw.pcm")
-        currentLogFile = File(sessionDir, "scan_log.jsonl")
-    }
-
     private fun startForegroundServiceNotification() {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channel = NotificationChannel(NOTIFICATION_CHANNEL_ID, "Wardriving Service", NotificationManager.IMPORTANCE_LOW)
@@ -454,51 +455,11 @@ class DataCollectionService : Service() {
         }
     }
 
-    @SuppressLint("MissingPermission")
-    private fun startAudioRecording() {
-        serviceScope.launch(Dispatchers.IO) {
-            if (!hasPermissions(Manifest.permission.RECORD_AUDIO)) return@launch
-            val recorder = AudioRecord(MediaRecorder.AudioSource.MIC, SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT, BUFFER_SIZE)
-            val data = ByteArray(BUFFER_SIZE)
-            var outputStream: FileOutputStream? = null
-            try {
-                if (recorder.state != AudioRecord.STATE_INITIALIZED) {
-                    Log.e(TAG, "AudioRecord not initialized")
-                    return@launch
-                }
-                recorder.startRecording()
-                outputStream = FileOutputStream(currentAudioFile)
-                while (isRecording) {
-                    val read = recorder.read(data, 0, data.size)
-                    if (read > 0) outputStream.write(data, 0, read)
-                    else if (read == AudioRecord.ERROR_INVALID_OPERATION || read == AudioRecord.ERROR_BAD_VALUE) break
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Audio Error: ${e.message}")
-            } finally {
-                try { outputStream?.flush(); outputStream?.close() } catch (e: Exception) {}
-                try { if (recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) recorder.stop() } catch (e: Exception) {}
-                try { recorder.release() } catch (e: Exception) {}
-            }
-        }
-    }
-
-    internal suspend fun appendLog(record: ScanRecord) {
-        fileMutex.withLock {
-            try {
-                if (!this::currentLogFile.isInitialized) setupFiles()
-                val jsonLine = gson.toJson(record) + "\n"
-                FileOutputStream(currentLogFile, true).use { it.write(jsonLine.toByteArray()) }
-                Log.d(TAG, "Log guardado.")
-            } catch (e: Exception) { Log.e(TAG, "Log Error: $e") }
-        }
-    }
-
     private suspend fun saveDataToDb(record: ScanRecord, type: String) {
-        if (!this::db.isInitialized) return
+        if (!this::dao.isInitialized) return
         if (currentSessionId != -1L) {
             val json = gson.toJson(record)
-            db.scanDao().insertData(
+            dao.insertData(
                 ScanDataEntity(
                     sessionId = currentSessionId,
                     type = type,
