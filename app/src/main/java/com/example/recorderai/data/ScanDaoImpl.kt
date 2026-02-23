@@ -291,4 +291,187 @@ class ScanDaoImpl(private val dbHelper: DatabaseHelper) : ScanDao {
             if (idx >= 0 && !isNull(idx)) getString(idx) else null
         }
     )
+
+    // --- EXPORT OPERATIONS ---
+
+    override suspend fun getAllRoomsForExport(): List<RoomEntity> = withContext(Dispatchers.IO) {
+        val db = dbHelper.readableDatabase
+        val cursor = db.query(
+            DatabaseHelper.TABLE_ROOMS,
+            null, null, null, null, null,
+            "${DatabaseHelper.COLUMN_TIMESTAMP} DESC"
+        )
+        val rooms = mutableListOf<RoomEntity>()
+        while (cursor.moveToNext()) {
+            rooms.add(cursor.toRoomEntity())
+        }
+        cursor.close()
+        rooms
+    }
+
+    override suspend fun getCellAttributesForRoom(roomId: Long): List<CellAttributeEntity> = withContext(Dispatchers.IO) {
+        val db = dbHelper.readableDatabase
+        val cursor = db.query(
+            DatabaseHelper.TABLE_ATTRIBUTES,
+            null,
+            "${DatabaseHelper.COLUMN_ROOM_ID} = ?",
+            arrayOf(roomId.toString()),
+            null, null, null
+        )
+        val attrs = mutableListOf<CellAttributeEntity>()
+        while (cursor.moveToNext()) {
+            attrs.add(cursor.toCellAttributeEntity())
+        }
+        cursor.close()
+        attrs
+    }
+
+    override suspend fun getAllSessionsForExport(roomId: Long?): List<ScanSessionEntity> = withContext(Dispatchers.IO) {
+        val db = dbHelper.readableDatabase
+        val cursor = if (roomId != null) {
+            db.query(
+                DatabaseHelper.TABLE_SESSIONS,
+                null,
+                "${DatabaseHelper.COLUMN_ROOM_ID} = ?",
+                arrayOf(roomId.toString()),
+                null, null,
+                "${DatabaseHelper.COLUMN_TIMESTAMP} DESC"
+            )
+        } else {
+            db.query(
+                DatabaseHelper.TABLE_SESSIONS,
+                null, null, null, null, null,
+                "${DatabaseHelper.COLUMN_TIMESTAMP} DESC"
+            )
+        }
+        val sessions = mutableListOf<ScanSessionEntity>()
+        while (cursor.moveToNext()) {
+            sessions.add(cursor.toSessionEntity())
+        }
+        cursor.close()
+        sessions
+    }
+
+    override suspend fun getAllScanDataForExport(roomId: Long?): List<ScanDataWithSessionInfo> = withContext(Dispatchers.IO) {
+        val db = dbHelper.readableDatabase
+        val query = if (roomId != null) {
+            """
+            SELECT d.${DatabaseHelper.COLUMN_ID}, d.${DatabaseHelper.COLUMN_SESSION_ID},
+                   s.${DatabaseHelper.COLUMN_ROOM_ID}, s.${DatabaseHelper.COLUMN_CELL_ID},
+                   d.${DatabaseHelper.COLUMN_TYPE}, d.${DatabaseHelper.COLUMN_CONTENT},
+                   d.${DatabaseHelper.COLUMN_TIMESTAMP}
+            FROM ${DatabaseHelper.TABLE_DATA} d
+            INNER JOIN ${DatabaseHelper.TABLE_SESSIONS} s ON d.${DatabaseHelper.COLUMN_SESSION_ID} = s.${DatabaseHelper.COLUMN_ID}
+            WHERE s.${DatabaseHelper.COLUMN_ROOM_ID} = ?
+            ORDER BY d.${DatabaseHelper.COLUMN_TIMESTAMP} ASC
+            """
+        } else {
+            """
+            SELECT d.${DatabaseHelper.COLUMN_ID}, d.${DatabaseHelper.COLUMN_SESSION_ID},
+                   s.${DatabaseHelper.COLUMN_ROOM_ID}, s.${DatabaseHelper.COLUMN_CELL_ID},
+                   d.${DatabaseHelper.COLUMN_TYPE}, d.${DatabaseHelper.COLUMN_CONTENT},
+                   d.${DatabaseHelper.COLUMN_TIMESTAMP}
+            FROM ${DatabaseHelper.TABLE_DATA} d
+            INNER JOIN ${DatabaseHelper.TABLE_SESSIONS} s ON d.${DatabaseHelper.COLUMN_SESSION_ID} = s.${DatabaseHelper.COLUMN_ID}
+            ORDER BY d.${DatabaseHelper.COLUMN_TIMESTAMP} ASC
+            """
+        }
+        val cursor = if (roomId != null) {
+            db.rawQuery(query, arrayOf(roomId.toString()))
+        } else {
+            db.rawQuery(query, null)
+        }
+        val data = mutableListOf<ScanDataWithSessionInfo>()
+        while (cursor.moveToNext()) {
+            data.add(ScanDataWithSessionInfo(
+                id = cursor.getLong(0),
+                sessionId = cursor.getLong(1),
+                roomId = cursor.getLong(2),
+                cellId = cursor.getInt(3),
+                type = cursor.getString(4),
+                content = cursor.getString(5),
+                timestamp = cursor.getLong(6)
+            ))
+        }
+        cursor.close()
+        data
+    }
+
+    override suspend fun getScanDataCountsBySession(sessionId: Long): Int = withContext(Dispatchers.IO) {
+        val db = dbHelper.readableDatabase
+        val cursor = db.rawQuery(
+            "SELECT COUNT(*) FROM ${DatabaseHelper.TABLE_DATA} WHERE ${DatabaseHelper.COLUMN_SESSION_ID} = ?",
+            arrayOf(sessionId.toString())
+        )
+        var count = 0
+        if (cursor.moveToFirst()) {
+            count = cursor.getInt(0)
+        }
+        cursor.close()
+        count
+    }
+
+    override suspend fun getScanDataCountsByTypeForExport(roomId: Long?): Map<String, Int> = withContext(Dispatchers.IO) {
+        val db = dbHelper.readableDatabase
+        val query = if (roomId != null) {
+            """
+            SELECT d.${DatabaseHelper.COLUMN_TYPE}, COUNT(d.${DatabaseHelper.COLUMN_ID}) as count
+            FROM ${DatabaseHelper.TABLE_DATA} d
+            INNER JOIN ${DatabaseHelper.TABLE_SESSIONS} s ON d.${DatabaseHelper.COLUMN_SESSION_ID} = s.${DatabaseHelper.COLUMN_ID}
+            WHERE s.${DatabaseHelper.COLUMN_ROOM_ID} = ?
+            GROUP BY d.${DatabaseHelper.COLUMN_TYPE}
+            """
+        } else {
+            """
+            SELECT d.${DatabaseHelper.COLUMN_TYPE}, COUNT(d.${DatabaseHelper.COLUMN_ID}) as count
+            FROM ${DatabaseHelper.TABLE_DATA} d
+            GROUP BY d.${DatabaseHelper.COLUMN_TYPE}
+            """
+        }
+        val cursor = if (roomId != null) {
+            db.rawQuery(query, arrayOf(roomId.toString()))
+        } else {
+            db.rawQuery(query, null)
+        }
+        val counts = mutableMapOf<String, Int>()
+        while (cursor.moveToNext()) {
+            val type = cursor.getString(0) ?: "UNKNOWN"
+            val count = cursor.getInt(1)
+            counts[type] = count
+        }
+        cursor.close()
+        counts
+    }
+
+    override suspend fun getScanDataDateRange(roomId: Long?): Pair<Long, Long>? = withContext(Dispatchers.IO) {
+        val db = dbHelper.readableDatabase
+        val query = if (roomId != null) {
+            """
+            SELECT MIN(d.${DatabaseHelper.COLUMN_TIMESTAMP}), MAX(d.${DatabaseHelper.COLUMN_TIMESTAMP})
+            FROM ${DatabaseHelper.TABLE_DATA} d
+            INNER JOIN ${DatabaseHelper.TABLE_SESSIONS} s ON d.${DatabaseHelper.COLUMN_SESSION_ID} = s.${DatabaseHelper.COLUMN_ID}
+            WHERE s.${DatabaseHelper.COLUMN_ROOM_ID} = ?
+            """
+        } else {
+            """
+            SELECT MIN(${DatabaseHelper.COLUMN_TIMESTAMP}), MAX(${DatabaseHelper.COLUMN_TIMESTAMP})
+            FROM ${DatabaseHelper.TABLE_DATA}
+            """
+        }
+        val cursor = if (roomId != null) {
+            db.rawQuery(query, arrayOf(roomId.toString()))
+        } else {
+            db.rawQuery(query, null)
+        }
+        var range: Pair<Long, Long>? = null
+        if (cursor.moveToFirst()) {
+            val min = cursor.getLong(0)
+            val max = cursor.getLong(1)
+            if (min > 0 && max > 0) {
+                range = Pair(min, max)
+            }
+        }
+        cursor.close()
+        range
+    }
 }

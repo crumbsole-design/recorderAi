@@ -86,4 +86,80 @@ class ScanRepository(private val dao: ScanDao) {
     suspend fun updateRoomName(roomId: Long, newName: String) {
         dao.updateRoomName(roomId, newName)
     }
+
+    // Export operations
+    suspend fun exportAllData(roomId: Long? = null): ExportData {
+        val rooms = dao.getAllRoomsForExport()
+        val sessions = dao.getAllSessionsForExport(roomId)
+        val scanData = dao.getAllScanDataForExport(roomId)
+        val typeCounts = dao.getScanDataCountsByTypeForExport(roomId)
+        val dateRange = dao.getScanDataDateRange(roomId)
+
+        // Build room exports with cell attributes
+        val roomExports = rooms.map { room ->
+            val cellAttrs = dao.getCellAttributesForRoom(room.id)
+            RoomExport(
+                id = room.id,
+                name = room.name,
+                timestamp = room.timestamp,
+                cells = cellAttrs.map { attr ->
+                    CellExport(
+                        cellId = attr.cellId,
+                        displayName = attr.displayName,
+                        isEntrance = attr.isEntrance,
+                        isExit = attr.isExit,
+                        isLinkable = attr.isLinkable
+                    )
+                }
+            )
+        }
+
+        // Build session exports with counts and names
+        val sessionExports = sessions.map { session ->
+            val roomName = rooms.find { it.id == session.roomId }?.name
+            val cellAttr = dao.getCellAttributesForRoom(session.roomId).find { it.cellId == session.cellId }
+            val dataCount = dao.getScanDataCountsBySession(session.id)
+            SessionExport(
+                id = session.id,
+                roomId = session.roomId,
+                roomName = roomName,
+                cellId = session.cellId,
+                cellName = cellAttr?.displayName,
+                timestamp = session.timestamp,
+                dataCount = dataCount
+            )
+        }
+
+        // Build scan data exports
+        val scanDataExports = scanData.map { data ->
+            val roomName = rooms.find { it.id == data.roomId }?.name
+            val cellAttr = dao.getCellAttributesForRoom(data.roomId).find { it.cellId == data.cellId }
+            ScanDataExport(
+                id = data.id,
+                sessionId = data.sessionId,
+                roomId = data.roomId,
+                cellId = data.cellId,
+                type = data.type,
+                timestamp = data.timestamp,
+                content = data.content
+            )
+        }
+
+        // Build statistics
+        val statistics = ExportStatistics(
+            totalRooms = if (roomId != null) 1 else rooms.size,
+            totalSessions = sessions.size,
+            totalScanRecords = scanData.size,
+            recordsByType = typeCounts,
+            dateRange = dateRange?.let { pair -> DateRange(start = pair.first, end = pair.second) }
+        )
+
+        return ExportData(
+            exportType = if (roomId != null) "BY_ROOM" else "FULL",
+            rooms = if (roomId != null) roomExports.filter { it.id == roomId } else roomExports,
+            sessions = sessionExports,
+            scanData = scanDataExports,
+            statistics = statistics
+        )
+    }
 }

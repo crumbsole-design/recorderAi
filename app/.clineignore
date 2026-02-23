@@ -1,0 +1,31 @@
+# --- Gradle & Build Artifacts ---
+.gradle/
+build/
+**/build/
+captures/
+*.apk
+*.aar
+*.jks
+*.keystore
+
+# --- Android Studio / IntelliJ ---
+.idea/
+*.iml
+local.properties
+.navigation/
+.externalNativeBuild/
+.cxx/
+
+# --- Kotlin Specific ---
+.kotlin/
+bin/
+gen/
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db
+
+# --- Sensitive/Large Files ---
+*.log
+.env
+.env.*
