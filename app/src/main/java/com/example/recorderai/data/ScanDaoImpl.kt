@@ -217,7 +217,41 @@ class ScanDaoImpl(private val dbHelper: DatabaseHelper) : ScanDao {
         emit(counts)
     }.flowOn(Dispatchers.IO)
 
+    override fun getScanDataCountsByType(roomId: Long, cellId: Int): Flow<Map<String, Int>> = flow {
+        val db = dbHelper.readableDatabase
+        // Query to count scan_data by type for a specific cell
+        val cursor = db.rawQuery(
+            """
+            SELECT d.${DatabaseHelper.COLUMN_TYPE}, COUNT(d.${DatabaseHelper.COLUMN_ID}) as count
+            FROM ${DatabaseHelper.TABLE_SESSIONS} s
+            INNER JOIN ${DatabaseHelper.TABLE_DATA} d ON s.${DatabaseHelper.COLUMN_ID} = d.${DatabaseHelper.COLUMN_SESSION_ID}
+            WHERE s.${DatabaseHelper.COLUMN_ROOM_ID} = ? AND s.${DatabaseHelper.COLUMN_CELL_ID} = ?
+            GROUP BY d.${DatabaseHelper.COLUMN_TYPE}
+            """.trimIndent(),
+            arrayOf(roomId.toString(), cellId.toString())
+        )
+        val counts = mutableMapOf<String, Int>()
+        while (cursor.moveToNext()) {
+            val type = cursor.getString(0) ?: "UNKNOWN"
+            val count = cursor.getInt(1)
+            counts[type] = count
+        }
+        cursor.close()
+        emit(counts)
+    }.flowOn(Dispatchers.IO)
+
+    override suspend fun deleteRoom(roomId: Long): Unit = withContext(Dispatchers.IO) {
+        val db = dbHelper.writableDatabase
+        // Delete the room - CASCADE will handle related sessions, data, and attributes
+        db.delete(
+            DatabaseHelper.TABLE_ROOMS,
+            "${DatabaseHelper.COLUMN_ID} = ?",
+            arrayOf(roomId.toString())
+        )
+    }
+
     // Helper extension functions to convert Cursor to entities
+
     private fun Cursor.toRoomEntity() = RoomEntity(
         id = getLong(getColumnIndexOrThrow(DatabaseHelper.COLUMN_ID)),
         name = getString(getColumnIndexOrThrow(DatabaseHelper.COLUMN_NAME)),

@@ -36,6 +36,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.recorderai.data.AppDatabase
 import com.example.recorderai.data.ScanRepository
+import com.example.recorderai.ui.screens.CellDetailScreen
 import com.example.recorderai.ui.screens.RoomGridScreen
 import com.example.recorderai.ui.screens.RoomListScreen
 import com.example.recorderai.ui.theme.RecorderAiTheme
@@ -84,9 +85,33 @@ fun MainNavigation() {
             val roomId = backStackEntry.arguments?.getString("roomId")?.toLongOrNull() ?: return@composable
             val room = viewModel.rooms.collectAsState().value.find { it.id == roomId }
             if (room != null) {
+                // ARREGLO: Llamar selectRoom para cargar los atributos de celda
+                LaunchedEffect(roomId) {
+                    viewModel.selectRoom(roomId)
+                }
                 RoomGridScreen(
                     viewModel = viewModel,
                     room = room,
+                    onCellClick = { cellId ->
+                        navController.navigate("cell_detail/$roomId/$cellId")
+                    },
+                    onBackClick = { navController.popBackStack() }
+                )
+            }
+        }
+        composable("cell_detail/{roomId}/{cellId}") { backStackEntry ->
+            val roomId = backStackEntry.arguments?.getString("roomId")?.toLongOrNull() ?: return@composable
+            val cellId = backStackEntry.arguments?.getString("cellId")?.toIntOrNull() ?: return@composable
+            val room = viewModel.rooms.collectAsState().value.find { it.id == roomId }
+            if (room != null) {
+                LaunchedEffect(roomId, cellId) {
+                    viewModel.selectRoom(roomId)
+                    viewModel.loadCellDataCounts(roomId, cellId)
+                }
+                CellDetailScreen(
+                    viewModel = viewModel,
+                    room = room,
+                    cellId = cellId,
                     onBackClick = { navController.popBackStack() }
                 )
             }

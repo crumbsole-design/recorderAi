@@ -1,6 +1,7 @@
 package com.example.recorderai.ui.screens
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,6 +26,9 @@ fun RoomListScreen(
     onRoomSelected: (Long) -> Unit
 ) {
     val rooms by viewModel.rooms.collectAsState()
+    
+    // State for delete dialog
+    var roomToDelete by remember { mutableStateOf<RoomEntity?>(null) }
 
     Scaffold(
         topBar = {
@@ -74,18 +78,47 @@ fun RoomListScreen(
                         onSelect = {
                             viewModel.selectRoom(room.id)
                             onRoomSelected(room.id)
+                        },
+                        onLongPress = {
+                            roomToDelete = room
                         }
                     )
                 }
             }
         }
     }
+    
+    // Delete confirmation dialog
+    roomToDelete?.let { room ->
+        AlertDialog(
+            onDismissRequest = { roomToDelete = null },
+            title = { Text("Eliminar estancia") },
+            text = { Text("¿Estás seguro de que quieres eliminar esta estancia?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteRoom(room.id)
+                        roomToDelete = null
+                    }
+                ) {
+                    Text("Eliminar", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { roomToDelete = null }) {
+                    Text("Cancelar")
+                }
+            }
+        )
+    }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun RoomListItem(
     room: RoomEntity,
-    onSelect: () -> Unit
+    onSelect: () -> Unit,
+    onLongPress: () -> Unit
 ) {
     val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.US)
     val formattedDate = dateFormat.format(Date(room.timestamp))
@@ -93,7 +126,10 @@ fun RoomListItem(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onSelect() }
+            .combinedClickable(
+                onClick = { onSelect() },
+                onLongClick = { onLongPress() }
+            )
             .padding(4.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {

@@ -29,6 +29,16 @@ class RoomGridViewModel(private val repository: ScanRepository) : ViewModel() {
     private val _cellLinkableStatus = MutableStateFlow<Map<Int, Boolean?>>(emptyMap())
     val cellLinkableStatus: StateFlow<Map<Int, Boolean?>> = _cellLinkableStatus.asStateFlow()
 
+    // Cell detail data
+    private val _cellDataCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val cellDataCounts: StateFlow<Map<String, Int>> = _cellDataCounts.asStateFlow()
+
+    private val _currentCellLinkableStatus = MutableStateFlow<Boolean?>(null)
+    val currentCellLinkableStatus: StateFlow<Boolean?> = _currentCellLinkableStatus.asStateFlow()
+
+    private val _hasCellData = MutableStateFlow(false)
+    val hasCellData: StateFlow<Boolean> = _hasCellData.asStateFlow()
+
     // Session tracking
     private val _currentSessionId = MutableStateFlow<Long>(-1L)
     val currentSessionId: StateFlow<Long> = _currentSessionId.asStateFlow()
@@ -69,17 +79,31 @@ class RoomGridViewModel(private val repository: ScanRepository) : ViewModel() {
         }
     }
 
+    fun deleteRoom(roomId: Long) {
+        viewModelScope.launch {
+            repository.deleteRoom(roomId)
+            loadRooms()
+            // Clear selected room if it was deleted
+            if (_selectedRoom.value?.id == roomId) {
+                _selectedRoom.value = null
+                _activeCells.value = emptySet()
+                _currentSessionId.value = -1L
+                _currentCellId.value = -1
+            }
+        }
+    }
+
     private fun loadCellAttributes(roomId: Long) {
         val room = _selectedRoom.value
         if (room?.id == roomId) {
-            val statusMap = mutableMapOf<Int, Boolean?>()
-            // Initialize all 15 cells (0-14 for 3x5 grid)
-            for (i in 0 until 15) {
-                viewModelScope.launch {
+            viewModelScope.launch {
+                val statusMap = mutableMapOf<Int, Boolean?>()
+                // Initialize all 15 cells (0-14 for 3x5 grid) and load each one
+                for (i in 0 until 15) {
                     val attr = repository.getCellAttribute(roomId, i)
                     statusMap[i] = attr?.isLinkable
-                    _cellLinkableStatus.value = statusMap.toMap()
                 }
+                _cellLinkableStatus.value = statusMap.toMap()
             }
         }
     }
@@ -161,5 +185,20 @@ class RoomGridViewModel(private val repository: ScanRepository) : ViewModel() {
 
     fun isCellRecording(cellId: Int): Boolean {
         return _activeCells.value.contains(cellId)
+    }
+
+    // Load data counts for a specific cell
+    fun loadCellDataCounts(roomId: Long, cellId: Int) {
+        viewModelScope.launch {
+            // Load cell attribute (linkable status)
+            val attr = repository.getCellAttribute(roomId, cellId)
+            _currentCellLinkableStatus.value = attr?.isLinkable
+            
+            // Load data counts by type
+            repository.getScanDataCountsByType(roomId, cellId).collect { counts ->
+                _cellDataCounts.value = counts
+                _hasCellData.value = counts.values.sum() > 0
+            }
+        }
     }
 }

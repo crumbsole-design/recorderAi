@@ -33,4 +33,10 @@ interface ScanDao {
 
     // Aggregation for grid visualization - returns map of cellId to count
     fun getScanCounts(roomId: Long): Flow<Map<Int, Int>>
+
+    // Get scan data counts by type for a specific cell
+    fun getScanDataCountsByType(roomId: Long, cellId: Int): Flow<Map<String, Int>>
+
+    // Delete a room and all associated data
+    suspend fun deleteRoom(roomId: Long)
 }

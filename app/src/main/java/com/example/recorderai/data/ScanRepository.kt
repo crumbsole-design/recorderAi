@@ -72,4 +72,13 @@ class ScanRepository(private val dao: ScanDao) {
 
     // Aggregation
     fun getScanCounts(roomId: Long): Flow<Map<Int, Int>> = dao.getScanCounts(roomId)
+
+    // Get scan data counts by type for a specific cell
+    fun getScanDataCountsByType(roomId: Long, cellId: Int): Flow<Map<String, Int>> = 
+        dao.getScanDataCountsByType(roomId, cellId)
+
+    // Delete a room and all associated data
+    suspend fun deleteRoom(roomId: Long) {
+        dao.deleteRoom(roomId)
+    }
 }

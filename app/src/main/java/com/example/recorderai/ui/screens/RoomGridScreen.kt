@@ -1,7 +1,12 @@
 package com.example.recorderai.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -12,12 +17,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.example.recorderai.data.RoomEntity
 import com.example.recorderai.ui.viewmodels.RoomGridViewModel
-import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -25,6 +31,7 @@ import kotlinx.coroutines.launch
 fun RoomGridScreen(
     viewModel: RoomGridViewModel,
     room: RoomEntity,
+    onCellClick: (Int) -> Unit,
     onBackClick: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -33,6 +40,63 @@ fun RoomGridScreen(
     val cellLinkableStatus by viewModel.cellLinkableStatus.collectAsState()
     var showLinkableDialog by remember { mutableStateOf<Int?>(null) }
     var showRegenerateDialog by remember { mutableStateOf<Int?>(null) }
+    var pendingCellForRecording by remember { mutableStateOf<Pair<Int, Boolean>?>(null) }
+
+    // Permisos necesarios para la recolección
+    val requiredPermissions = remember {
+        buildList {
+            add(Manifest.permission.RECORD_AUDIO)
+            add(Manifest.permission.ACCESS_FINE_LOCATION)
+            add(Manifest.permission.ACCESS_COARSE_LOCATION)
+            add(Manifest.permission.READ_PHONE_STATE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                add(Manifest.permission.BLUETOOTH_SCAN)
+                add(Manifest.permission.BLUETOOTH_CONNECT)
+            }
+        }.toTypedArray()
+    }
+
+    // Función para verificar permisos
+    val hasAllPermissions: () -> Boolean = {
+        requiredPermissions.all {
+            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    // Launcher para solicitar permisos
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        if (permissions.values.all { it }) {
+            pendingCellForRecording?.let { (cellId, linkable) ->
+                scope.launch {
+                    viewModel.toggleCellRecording(cellId, context, linkable)
+                }
+            }
+        } else {
+            Toast.makeText(
+                context,
+                "Se necesitan todos los permisos para iniciar la recolección",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+        pendingCellForRecording = null
+    }
+
+    // Función helper para iniciar grabación con verificación de permisos
+    fun startRecordingWithPermissions(cellId: Int, linkable: Boolean) {
+        if (hasAllPermissions()) {
+            scope.launch {
+                viewModel.toggleCellRecording(cellId, context, linkable)
+            }
+        } else {
+            pendingCellForRecording = cellId to linkable
+            permissionLauncher.launch(requiredPermissions)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -80,16 +144,8 @@ fun RoomGridScreen(
                                 isRecording = activeCells.contains(cellId),
                                 linkableStatus = cellLinkableStatus[cellId],
                                 onCellClick = {
-                                    val status = cellLinkableStatus[cellId]
-                                    if (status == null) {
-                                        // First time clicking this cell, show dialog
-                                        showLinkableDialog = cellId
-                                    } else {
-                                        // Already configured, toggle recording
-                                        scope.launch {
-                                            viewModel.toggleCellRecording(cellId, context)
-                                        }
-                                    }
+                                    // Navegar a la pantalla de detalle de la celda
+                                    onCellClick(cellId)
                                 },
                                 onLongClick = {
                                     showRegenerateDialog = cellId
@@ -113,10 +169,8 @@ fun RoomGridScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        scope.launch {
-                            viewModel.toggleCellRecording(cellId, context, true)
-                            showLinkableDialog = null
-                        }
+                        startRecordingWithPermissions(cellId, true)
+                        showLinkableDialog = null
                     }
                 ) {
                     Text("Abrir")
@@ -125,10 +179,8 @@ fun RoomGridScreen(
             dismissButton = {
                 Button(
                     onClick = {
-                        scope.launch {
-                            viewModel.toggleCellRecording(cellId, context, false)
-                            showLinkableDialog = null
-                        }
+                        startRecordingWithPermissions(cellId, false)
+                        showLinkableDialog = null
                     }
                 ) {
                     Text("Cerrar")
@@ -191,8 +243,12 @@ fun GridCell(
     Card(
         modifier = modifier
             .aspectRatio(1f)
-            .clickable { onCellClick() }
-            .customLongPress { onLongClick() },
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { onCellClick() },
+                    onLongPress = { onLongClick() }
+                )
+            },
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
         colors = CardDefaults.cardColors(containerColor = backgroundColor)
     ) {
@@ -217,14 +273,5 @@ fun GridCell(
                 )
             }
         }
-    }
-}
-
-// Extension function for long press detection
-fun Modifier.customLongPress(onLongPress: () -> Unit): Modifier {
-    return this.pointerInput(Unit) {
-        detectTapGestures(
-            onLongPress = { onLongPress() }
-        )
     }
 }
